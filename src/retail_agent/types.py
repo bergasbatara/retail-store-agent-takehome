@@ -97,6 +97,21 @@ class PricedLine:
 
 
 @dataclass(frozen=True)
+class InventorySnapshot:
+    """Current inventory state for a concrete SKU."""
+
+    sku: str
+    product_id: str
+    product_name: str
+    category: str
+    on_hand_qty: int
+    reorder_point: int
+    reorder_qty: int
+    color: str | None = None
+    size: str | None = None
+
+
+@dataclass(frozen=True)
 class SaleResult:
     """Persisted sale result returned by checkout flows."""
 

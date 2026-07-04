@@ -126,6 +126,42 @@ class InventoryRepository:
         ).fetchall()
         return _rows_to_dicts(rows)
 
+    def list_inventory_for_product(self, product_id: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+                i.*,
+                p.product_id,
+                p.product_name,
+                p.category,
+                p.color,
+                p.size
+            FROM inventory i
+            JOIN products p ON p.sku = i.sku
+            WHERE p.product_id = ?
+            ORDER BY p.color, p.size, i.sku
+            """,
+            (product_id,),
+        ).fetchall()
+        return _rows_to_dicts(rows)
+
+    def list_all_inventory(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+                i.*,
+                p.product_id,
+                p.product_name,
+                p.category,
+                p.color,
+                p.size
+            FROM inventory i
+            JOIN products p ON p.sku = i.sku
+            ORDER BY p.product_name, p.color, p.size, i.sku
+            """
+        ).fetchall()
+        return _rows_to_dicts(rows)
+
 
 @dataclass
 class OrderRepository:
@@ -193,6 +229,28 @@ class OrderRepository:
             "order": dict(order_row),
             "lines": _rows_to_dicts(line_rows),
         }
+
+    def list_units_sold_by_product(
+        self,
+        period_start: date,
+        period_end: date,
+    ) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+                p.product_id,
+                p.product_name,
+                SUM(ol.quantity) AS units_sold
+            FROM orders o
+            JOIN order_lines ol ON ol.order_id = o.order_id
+            JOIN products p ON p.sku = ol.sku
+            WHERE o.order_date >= ? AND o.order_date <= ?
+            GROUP BY p.product_id, p.product_name
+            ORDER BY p.product_name
+            """,
+            (period_start.isoformat(), period_end.isoformat()),
+        ).fetchall()
+        return _rows_to_dicts(rows)
 
 
 @dataclass
