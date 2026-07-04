@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import sqlite3
+from typing import Any
 
 from retail_agent.config import Settings, load_settings
 from retail_agent.db.bootstrap import bootstrap_database
@@ -17,6 +18,7 @@ class AppContext:
 
     settings: Settings
     conn: sqlite3.Connection
+    session_state: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def main() -> int:
@@ -64,13 +66,9 @@ def run_repl(app_context: AppContext) -> int:
 
 def handle_user_turn(user_input: str, app_context: AppContext) -> str:
     """Handle a single user turn and return terminal output."""
-    order_count = app_context.conn.execute("SELECT COUNT(*) AS count FROM orders").fetchone()[
-        "count"
-    ]
-    return (
-        f"Received input: {user_input}\n"
-        f"Database is initialized and currently holds {order_count} seeded orders."
-    )
+    from retail_agent.agent.chat_runtime import run_agent_turn
+
+    return run_agent_turn(user_input, session_id="cli", app_context=app_context)
 
 
 def print_startup_banner(settings: Settings) -> None:
