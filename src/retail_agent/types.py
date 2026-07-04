@@ -80,6 +80,17 @@ class Promotion:
 
 
 @dataclass(frozen=True)
+class SupplierOffer:
+    """Supplier offer for a product."""
+
+    supplier_id: str
+    supplier_name: str
+    product_id: str
+    unit_cost: Decimal
+    lead_time_days: int
+
+
+@dataclass(frozen=True)
 class PricedLine:
     """Resolved sale line with pricing details applied."""
 
@@ -109,6 +120,29 @@ class InventorySnapshot:
     reorder_qty: int
     color: str | None = None
     size: str | None = None
+
+
+@dataclass(frozen=True)
+class ReorderCandidate:
+    """SKU-level inventory candidate for replenishment."""
+
+    sku: str
+    product_id: str
+    product_name: str
+    quantity_to_order: int
+    on_hand_qty: int
+    reorder_point: int
+    reorder_qty: int
+    color: str | None = None
+    size: str | None = None
+
+
+@dataclass(frozen=True)
+class ReceiveItemInput:
+    """Requested receipt quantity for a purchase-order line."""
+
+    sku: str
+    quantity_received: int
 
 
 @dataclass(frozen=True)

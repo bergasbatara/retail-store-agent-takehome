@@ -38,6 +38,17 @@ class CatalogRepository:
         ).fetchall()
         return _rows_to_dicts(rows)
 
+    def list_skus_for_product(self, product_id: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT * FROM skus
+            WHERE product_id = ?
+            ORDER BY color, size, sku
+            """,
+            (product_id,),
+        ).fetchall()
+        return _rows_to_dicts(rows)
+
     def find_matching_variant(
         self,
         product_name: str,
@@ -367,6 +378,8 @@ class PurchaseOrderRepository:
         supplier_id: str,
         order_date: str,
         status: str,
+        *,
+        commit: bool = True,
     ) -> None:
         self.conn.execute(
             """
@@ -375,7 +388,8 @@ class PurchaseOrderRepository:
             """,
             (purchase_order_id, supplier_id, order_date, status),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def add_purchase_order_line(
         self,
@@ -385,6 +399,8 @@ class PurchaseOrderRepository:
         quantity_ordered: int,
         unit_cost: str,
         quantity_received: int = 0,
+        *,
+        commit: bool = True,
     ) -> None:
         self.conn.execute(
             """
@@ -395,15 +411,16 @@ class PurchaseOrderRepository:
             """,
             (purchase_order_id, line_no, sku, quantity_ordered, quantity_received, unit_cost),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
-    def get_open_purchase_order(self, po_id: str) -> dict[str, Any] | None:
+    def get_purchase_order(self, po_id: str) -> dict[str, Any] | None:
         po_row = self.conn.execute(
             """
             SELECT po.*, s.supplier_name
             FROM purchase_orders po
             JOIN suppliers s ON s.supplier_id = po.supplier_id
-            WHERE po.purchase_order_id = ? AND po.status != 'received'
+            WHERE po.purchase_order_id = ?
             """,
             (po_id,),
         ).fetchone()
@@ -424,6 +441,47 @@ class PurchaseOrderRepository:
             "purchase_order": dict(po_row),
             "lines": _rows_to_dicts(line_rows),
         }
+
+    def get_open_purchase_order(self, po_id: str) -> dict[str, Any] | None:
+        po_bundle = self.get_purchase_order(po_id)
+        if po_bundle is None:
+            return None
+        if po_bundle["purchase_order"]["status"] == "received":
+            return None
+        return po_bundle
+
+    def update_purchase_order_line_received_qty(
+        self,
+        purchase_order_id: str,
+        sku: str,
+        delta_received: int,
+        *,
+        commit: bool = True,
+    ) -> None:
+        self.conn.execute(
+            """
+            UPDATE purchase_order_lines
+            SET quantity_received = quantity_received + ?
+            WHERE purchase_order_id = ? AND sku = ?
+            """,
+            (delta_received, purchase_order_id, sku),
+        )
+        if commit:
+            self.conn.commit()
+
+    def update_purchase_order_status(
+        self,
+        purchase_order_id: str,
+        status: str,
+        *,
+        commit: bool = True,
+    ) -> None:
+        self.conn.execute(
+            "UPDATE purchase_orders SET status = ? WHERE purchase_order_id = ?",
+            (status, purchase_order_id),
+        )
+        if commit:
+            self.conn.commit()
 
 
 @dataclass
