@@ -33,6 +33,70 @@ class ResolvedSku:
 
 
 @dataclass(frozen=True)
+class ProductResolution:
+    """Resolved product reference with candidate SKU matches."""
+
+    query: str
+    product_name: str
+    product_id: str
+    candidates: tuple[ResolvedSku, ...]
+
+
+@dataclass(frozen=True)
+class Customer:
+    """Resolved customer record."""
+
+    customer_id: str
+    name: str
+    email: str
+    joined_date: date
+
+
+@dataclass(frozen=True)
+class ResolvedReturnItem:
+    """Concrete return target resolved from an order reference."""
+
+    order_id: str
+    sku: str
+    product_id: str
+    product_name: str
+    quantity_purchased: int
+    color: str | None = None
+    size: str | None = None
+
+
+@dataclass(frozen=True)
+class Promotion:
+    """Normalized promotion record used by pricing logic."""
+
+    promo_id: str
+    description: str
+    type: str
+    value: Decimal
+    scope_type: str
+    scope_ref: str
+    start_date: date
+    end_date: date
+
+
+@dataclass(frozen=True)
+class PricedLine:
+    """Resolved sale line with pricing details applied."""
+
+    sku: str
+    product_id: str
+    product_name: str
+    quantity: int
+    category: str
+    color: str | None
+    size: str | None
+    base_unit_price: Decimal
+    effective_unit_price: Decimal
+    paid_unit_price: Decimal
+    applied_promotion: Promotion | None = None
+
+
+@dataclass(frozen=True)
 class SaleResult:
     """Persisted sale result returned by checkout flows."""
 
