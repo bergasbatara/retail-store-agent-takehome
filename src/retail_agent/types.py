@@ -112,6 +112,37 @@ class InventorySnapshot:
 
 
 @dataclass(frozen=True)
+class OrderLineDraft:
+    """Draft sale line ready for persistence."""
+
+    line_no: int
+    sku: str
+    quantity: int
+    unit_price: Decimal
+    paid_unit_price: Decimal
+    product_id: str
+    product_name: str
+    color: str | None = None
+    size: str | None = None
+    applied_promotion: Promotion | None = None
+
+
+@dataclass(frozen=True)
+class ReceiptView:
+    """Receipt-oriented projection of a persisted sale."""
+
+    order_id: str
+    order_date: date
+    payment_method: str
+    customer_id: str | None
+    customer_name: str | None
+    subtotal: Decimal
+    total_discount: Decimal
+    total_paid: Decimal
+    lines: tuple[OrderLineDraft, ...]
+
+
+@dataclass(frozen=True)
 class SaleResult:
     """Persisted sale result returned by checkout flows."""
 
@@ -123,7 +154,8 @@ class SaleResult:
     subtotal: Decimal
     total_discount: Decimal
     total_paid: Decimal
-    line_items: tuple[ResolvedSku, ...] = ()
+    receipt: ReceiptView | None = None
+    line_items: tuple[OrderLineDraft, ...] = ()
     message: str = ""
 
 

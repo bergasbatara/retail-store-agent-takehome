@@ -101,12 +101,13 @@ class InventoryRepository:
         ).fetchone()
         return _row_to_dict(row)
 
-    def adjust_on_hand(self, sku: str, delta: int) -> None:
+    def adjust_on_hand(self, sku: str, delta: int, *, commit: bool = True) -> None:
         self.conn.execute(
             "UPDATE inventory SET on_hand_qty = on_hand_qty + ? WHERE sku = ?",
             (delta, sku),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def list_reorder_candidates(self) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -174,6 +175,8 @@ class OrderRepository:
         customer_id: str | None,
         order_discount_pct: str,
         payment_method: str,
+        *,
+        commit: bool = True,
     ) -> None:
         self.conn.execute(
             """
@@ -182,7 +185,8 @@ class OrderRepository:
             """,
             (order_id, order_date, customer_id, order_discount_pct, payment_method),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def add_order_line(
         self,
@@ -191,6 +195,8 @@ class OrderRepository:
         sku: str,
         quantity: int,
         unit_price: str,
+        *,
+        commit: bool = True,
     ) -> None:
         self.conn.execute(
             """
@@ -199,7 +205,8 @@ class OrderRepository:
             """,
             (order_id, line_no, sku, quantity, unit_price),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def get_order_with_lines(self, order_id: str) -> dict[str, Any] | None:
         order_row = self.conn.execute(
