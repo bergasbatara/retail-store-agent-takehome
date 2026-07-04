@@ -49,6 +49,12 @@ class CatalogRepository:
         ).fetchall()
         return _rows_to_dicts(rows)
 
+    def list_categories(self) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT DISTINCT category FROM skus ORDER BY category"
+        ).fetchall()
+        return [str(row["category"]) for row in rows]
+
     def find_matching_variant(
         self,
         product_name: str,

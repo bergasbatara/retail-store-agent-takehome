@@ -80,6 +80,20 @@ class Promotion:
 
 
 @dataclass(frozen=True)
+class PromotionResult:
+    """Result returned after creating a promotion."""
+
+    promo_id: str
+    description: str
+    scope_type: str
+    scope_ref: str
+    percent_off: Decimal
+    start_date: date
+    end_date: date
+    message: str = ""
+
+
+@dataclass(frozen=True)
 class SupplierOffer:
     """Supplier offer for a product."""
 
