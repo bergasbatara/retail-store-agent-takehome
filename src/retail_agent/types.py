@@ -143,6 +143,23 @@ class ReceiptView:
 
 
 @dataclass(frozen=True)
+class SoldLine:
+    """Original sold line with paid-price context for returns."""
+
+    order_id: str
+    line_no: int
+    sku: str
+    product_id: str
+    product_name: str
+    quantity: int
+    unit_price: Decimal
+    order_discount_pct: Decimal
+    paid_unit_price: Decimal
+    color: str | None = None
+    size: str | None = None
+
+
+@dataclass(frozen=True)
 class SaleResult:
     """Persisted sale result returned by checkout flows."""
 

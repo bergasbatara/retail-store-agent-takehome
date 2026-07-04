@@ -273,6 +273,8 @@ class ReturnRepository:
         quantity: int,
         condition: str,
         refund_amount: str,
+        *,
+        commit: bool = True,
     ) -> None:
         self.conn.execute(
             """
@@ -281,7 +283,8 @@ class ReturnRepository:
             """,
             (return_id, return_date, order_id, sku, quantity, condition, refund_amount),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def list_returns_for_order(self, order_id: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(
