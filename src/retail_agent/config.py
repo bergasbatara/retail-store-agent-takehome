@@ -24,7 +24,7 @@ class Settings:
 
 def load_settings(project_root: Path | None = None) -> Settings:
     """Load runtime settings from the environment with local defaults."""
-    root = project_root or Path.cwd()
+    root = project_root or discover_project_root()
     return Settings(
         openai_api_key=_read_optional_env("OPENAI_API_KEY"),
         model_name=os.getenv("RETAIL_AGENT_MODEL", DEFAULT_MODEL_NAME),
@@ -40,6 +40,11 @@ def load_settings(project_root: Path | None = None) -> Settings:
         ),
         log_level=os.getenv("RETAIL_AGENT_LOG_LEVEL", DEFAULT_LOG_LEVEL),
     )
+
+
+def discover_project_root() -> Path:
+    """Resolve the workspace root from the package location."""
+    return Path(__file__).resolve().parents[2]
 
 
 def _read_optional_env(name: str) -> str | None:
