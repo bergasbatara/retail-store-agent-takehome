@@ -2,24 +2,14 @@
 
 from __future__ import annotations
 
-import csv
 import sqlite3
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 from retail_agent.db.schema import create_schema, schema_version
-
-
-SEED_FILES = {
-    "products": "products.csv",
-    "customers": "customers.csv",
-    "suppliers": "suppliers.csv",
-    "supplier_catalog": "supplier_catalog.csv",
-    "inventory": "inventory.csv",
-    "orders": "orders.csv",
-    "order_lines": "order_lines.csv",
-    "returns": "returns.csv",
-    "promotions": "promotions.csv",
-}
+from retail_agent.ingest.csv_loader import load_all_seed_files
+from retail_agent.types import SeedDataBundle
 
 
 def bootstrap_database(conn: sqlite3.Connection, seed_data_dir: Path) -> bool:
@@ -61,28 +51,36 @@ def has_existing_seed_data(conn: sqlite3.Connection) -> bool:
 
 def load_seed_csvs(conn: sqlite3.Connection, seed_data_dir: Path) -> None:
     """Load CSV seed data into the SQLite database."""
-    for table_name, file_name in SEED_FILES.items():
-        load_csv_into_table(conn, table_name, seed_data_dir / file_name)
+    bundle = load_all_seed_files(seed_data_dir)
+    load_seed_bundle(conn, bundle)
 
 
-def load_csv_into_table(
-    conn: sqlite3.Connection,
-    table_name: str,
-    csv_path: Path,
-) -> None:
-    """Insert every row from a CSV file into its matching table."""
-    with csv_path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        rows = list(reader)
+def load_seed_bundle(conn: sqlite3.Connection, bundle: SeedDataBundle) -> None:
+    """Insert a normalized seed bundle into the database."""
+    for table_name, rows in (
+        ("products", bundle.products),
+        ("customers", bundle.customers),
+        ("suppliers", bundle.suppliers),
+        ("supplier_catalog", bundle.supplier_catalog),
+        ("inventory", bundle.inventory),
+        ("orders", bundle.orders),
+        ("order_lines", bundle.order_lines),
+        ("returns", bundle.returns),
+        ("promotions", bundle.promotions),
+    ):
+        load_table_rows(conn, table_name, rows)
 
+
+def load_table_rows(conn: sqlite3.Connection, table_name: str, rows: tuple[dict, ...]) -> None:
+    """Insert normalized rows into a target table."""
     if not rows:
         return
 
-    columns = reader.fieldnames or []
+    columns = list(rows[0].keys())
     placeholders = ", ".join(["?"] * len(columns))
     column_list = ", ".join(columns)
     sql = f"INSERT INTO {table_name} ({column_list}) VALUES ({placeholders})"
-    values = [tuple(_normalize_csv_value(row[column]) for column in columns) for row in rows]
+    values = [tuple(_normalize_sql_value(row[column]) for column in columns) for row in rows]
     conn.executemany(sql, values)
 
 
@@ -98,7 +96,9 @@ def mark_seeded(conn: sqlite3.Connection) -> None:
     )
 
 
-def _normalize_csv_value(value: str | None) -> str | None:
-    if value == "":
-        return None
+def _normalize_sql_value(value: object) -> object:
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, date):
+        return value.isoformat()
     return value

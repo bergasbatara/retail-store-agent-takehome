@@ -102,3 +102,18 @@ class MarginReportRow:
     revenue: Decimal
     cost: Decimal
     margin: Decimal
+
+
+@dataclass(frozen=True)
+class SeedDataBundle:
+    """Normalized seed data loaded from the CSV exports."""
+
+    products: tuple[dict, ...]
+    customers: tuple[dict, ...]
+    suppliers: tuple[dict, ...]
+    supplier_catalog: tuple[dict, ...]
+    inventory: tuple[dict, ...]
+    orders: tuple[dict, ...]
+    order_lines: tuple[dict, ...]
+    returns: tuple[dict, ...]
+    promotions: tuple[dict, ...]
