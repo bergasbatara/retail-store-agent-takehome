@@ -270,6 +270,33 @@ class OrderRepository:
         ).fetchall()
         return _rows_to_dicts(rows)
 
+    def list_product_sales_lines(
+        self,
+        period_start: date,
+        period_end: date,
+    ) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+                o.order_id,
+                o.order_date,
+                o.order_discount_pct,
+                ol.line_no,
+                ol.sku,
+                ol.quantity,
+                ol.unit_price,
+                p.product_id,
+                p.product_name
+            FROM orders o
+            JOIN order_lines ol ON ol.order_id = o.order_id
+            JOIN products p ON p.sku = ol.sku
+            WHERE o.order_date >= ? AND o.order_date <= ?
+            ORDER BY o.order_date, o.order_id, ol.line_no
+            """,
+            (period_start.isoformat(), period_end.isoformat()),
+        ).fetchall()
+        return _rows_to_dicts(rows)
+
 
 @dataclass
 class ReturnRepository:
@@ -301,6 +328,26 @@ class ReturnRepository:
         rows = self.conn.execute(
             "SELECT * FROM returns WHERE order_id = ? ORDER BY return_date, return_id",
             (order_id,),
+        ).fetchall()
+        return _rows_to_dicts(rows)
+
+    def list_returns_for_period(
+        self,
+        period_start: date,
+        period_end: date,
+    ) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+                r.*,
+                p.product_id,
+                p.product_name
+            FROM returns r
+            JOIN products p ON p.sku = r.sku
+            WHERE r.return_date >= ? AND r.return_date <= ?
+            ORDER BY r.return_date, r.return_id
+            """,
+            (period_start.isoformat(), period_end.isoformat()),
         ).fetchall()
         return _rows_to_dicts(rows)
 
