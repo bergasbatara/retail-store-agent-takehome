@@ -6,7 +6,7 @@ import csv
 import sqlite3
 from pathlib import Path
 
-from retail_agent.db.schema import SCHEMA_VERSION, create_schema
+from retail_agent.db.schema import create_schema, schema_version
 
 
 SEED_FILES = {
@@ -29,10 +29,20 @@ def bootstrap_database(conn: sqlite3.Connection, seed_data_dir: Path) -> bool:
     if is_seeded(conn):
         return False
 
-    load_seed_data(conn, seed_data_dir)
+    if has_existing_seed_data(conn):
+        mark_seeded(conn)
+        conn.commit()
+        return False
+
+    load_seed_csvs(conn, seed_data_dir)
     mark_seeded(conn)
     conn.commit()
     return True
+
+
+def database_exists(db_path: Path) -> bool:
+    """Return True when the SQLite database file exists on disk."""
+    return db_path.exists()
 
 
 def is_seeded(conn: sqlite3.Connection) -> bool:
@@ -40,10 +50,16 @@ def is_seeded(conn: sqlite3.Connection) -> bool:
     row = conn.execute(
         "SELECT value FROM schema_metadata WHERE key = 'seeded_at_schema_version'"
     ).fetchone()
-    return bool(row and row["value"] == SCHEMA_VERSION)
+    return bool(row and row["value"] == schema_version())
 
 
-def load_seed_data(conn: sqlite3.Connection, seed_data_dir: Path) -> None:
+def has_existing_seed_data(conn: sqlite3.Connection) -> bool:
+    """Return True when core seeded tables already contain data."""
+    row = conn.execute("SELECT COUNT(*) AS count FROM products").fetchone()
+    return bool(row and row["count"] > 0)
+
+
+def load_seed_csvs(conn: sqlite3.Connection, seed_data_dir: Path) -> None:
     """Load CSV seed data into the SQLite database."""
     for table_name, file_name in SEED_FILES.items():
         load_csv_into_table(conn, table_name, seed_data_dir / file_name)
@@ -78,7 +94,7 @@ def mark_seeded(conn: sqlite3.Connection) -> None:
         VALUES ('seeded_at_schema_version', ?)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
         """,
-        (SCHEMA_VERSION,),
+        (schema_version(),),
     )
 
 
