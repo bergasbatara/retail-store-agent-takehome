@@ -1,0 +1,245 @@
+"""Tool definitions exposed to the chat runtime."""
+
+from __future__ import annotations
+
+
+def build_tool_definitions() -> list[dict]:
+    """Return stable JSON tool schemas for the retail agent."""
+    return [
+        _ring_up_sale_schema(),
+        _reorder_low_stock_schema(),
+        _receive_purchase_order_schema(),
+        _process_return_schema(),
+        _create_promotion_schema(),
+        _get_product_price_schema(),
+        _top_products_by_margin_schema(),
+        _stockout_risk_report_schema(),
+        _find_customer_schema(),
+        _find_product_schema(),
+    ]
+
+
+def _ring_up_sale_schema() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "ring_up_sale",
+            "description": "Create a sale for a walk-in or known customer.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_ref": {"type": ["string", "null"]},
+                    "payment_method": {"type": "string", "enum": ["cash", "card"]},
+                    "order_date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "product_name": {"type": "string"},
+                                "quantity": {"type": "integer", "minimum": 1},
+                                "sku": {"type": ["string", "null"]},
+                                "color": {"type": ["string", "null"]},
+                                "size": {"type": ["string", "null"]},
+                            },
+                            "required": ["product_name", "quantity"],
+                            "additionalProperties": False,
+                        },
+                        "minItems": 1,
+                    },
+                },
+                "required": ["payment_method", "order_date", "items"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _reorder_low_stock_schema() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "reorder_low_stock",
+            "description": "Create purchase orders for SKUs at or below reorder point.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "order_date": {"type": "string", "description": "YYYY-MM-DD"},
+                },
+                "required": ["order_date"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _receive_purchase_order_schema() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "receive_purchase_order",
+            "description": "Receive some or all quantities on an open purchase order.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "purchase_order_id": {"type": "string"},
+                    "receive_date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "received_items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "sku": {"type": "string"},
+                                "quantity_received": {"type": "integer", "minimum": 1},
+                            },
+                            "required": ["sku", "quantity_received"],
+                            "additionalProperties": False,
+                        },
+                        "minItems": 1,
+                    },
+                },
+                "required": ["purchase_order_id", "receive_date", "received_items"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _process_return_schema() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "process_return",
+            "description": "Process a return against an existing order.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "order_id": {"type": "string"},
+                    "sku_or_ref": {"type": "string"},
+                    "quantity": {"type": "integer", "minimum": 1},
+                    "condition": {"type": "string", "enum": ["good", "damaged"]},
+                    "return_date": {"type": "string", "description": "YYYY-MM-DD"},
+                },
+                "required": ["order_id", "sku_or_ref", "quantity", "condition", "return_date"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _create_promotion_schema() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "create_promotion",
+            "description": "Create a percent-off promotion for a product or category.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scope_type": {"type": "string", "enum": ["product", "category"]},
+                    "scope_ref": {"type": "string"},
+                    "percent_off": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 100},
+                    "start_date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "end_date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "description": {"type": "string"},
+                },
+                "required": ["scope_type", "scope_ref", "percent_off", "start_date", "end_date", "description"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _get_product_price_schema() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "get_product_price",
+            "description": "Get the effective sale price for a concrete SKU on a given date.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sku": {"type": "string"},
+                    "sale_date": {"type": "string", "description": "YYYY-MM-DD"},
+                },
+                "required": ["sku", "sale_date"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _top_products_by_margin_schema() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "top_products_by_margin",
+            "description": "Rank products by margin for a time period.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1},
+                    "period_start": {"type": "string", "description": "YYYY-MM-DD"},
+                    "period_end": {"type": "string", "description": "YYYY-MM-DD"},
+                },
+                "required": ["limit", "period_start", "period_end"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _stockout_risk_report_schema() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "stockout_risk_report",
+            "description": "Report products that are below reorder point or low on days of cover.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "as_of_date": {"type": "string", "description": "YYYY-MM-DD"},
+                },
+                "required": ["as_of_date"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _find_customer_schema() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "find_customer",
+            "description": "Find customers by ID, name, or email.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _find_product_schema() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "find_product",
+            "description": "Find a product or concrete variant by SKU or product description.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "color": {"type": ["string", "null"]},
+                    "size": {"type": ["string", "null"]},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+    }
