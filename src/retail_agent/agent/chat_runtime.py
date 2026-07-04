@@ -11,6 +11,14 @@ from retail_agent.agent.prompts import system_prompt
 from retail_agent.agent.tool_executor import execute_tool_call
 from retail_agent.agent.tool_schemas import build_tool_definitions
 from retail_agent.cli import AppContext
+from retail_agent.db.repositories import SessionRepository
+from retail_agent.session.memory import (
+    SessionMemory,
+    inject_memory_hints,
+    load_session_memory,
+    save_session_memory,
+    update_memory_from_tool_result,
+)
 
 
 MAX_HISTORY_MESSAGES = 12
@@ -27,9 +35,15 @@ def run_agent_turn(user_text: str, session_id: str, app_context: AppContext) -> 
     """Run a single agent turn with bounded session memory and tool use."""
     session_memory = app_context.session_state.setdefault(
         session_id,
-        {"messages": [], "tool_results": []},
+        {"messages": [], "tool_results": [], "memory": None},
     )
-    messages = build_messages(session_memory, user_text)
+    repo = SessionRepository(app_context.conn)
+    structured_memory = session_memory.get("memory")
+    if not isinstance(structured_memory, SessionMemory):
+        structured_memory = load_session_memory(session_id, repo)
+        session_memory["memory"] = structured_memory
+
+    messages = build_messages(session_memory, user_text, structured_memory)
     tools = build_tool_definitions()
     client = build_openai_client(app_context.settings)
     initial_response = submit_with_tools(
@@ -45,6 +59,9 @@ def run_agent_turn(user_text: str, session_id: str, app_context: AppContext) -> 
         client=client,
         model_name=app_context.settings.model_name,
         app_context=app_context,
+        structured_memory=structured_memory,
+        session_id=session_id,
+        session_repo=repo,
     )
     session_memory["messages"] = _bounded_messages(
         session_memory.get("messages", [])
@@ -56,10 +73,19 @@ def run_agent_turn(user_text: str, session_id: str, app_context: AppContext) -> 
     return final_text
 
 
-def build_messages(session_memory: dict, user_text: str) -> list[dict]:
+def build_messages(
+    session_memory: dict,
+    user_text: str,
+    structured_memory: SessionMemory,
+) -> list[dict]:
     """Build the message list sent to the model."""
     history = session_memory.get("messages", [])
-    return [{"role": "system", "content": system_prompt()}, *history, {"role": "user", "content": user_text}]
+    return [
+        {"role": "system", "content": system_prompt()},
+        {"role": "system", "content": inject_memory_hints(structured_memory)},
+        *history,
+        {"role": "user", "content": user_text},
+    ]
 
 
 def submit_with_tools(
@@ -84,6 +110,9 @@ def run_tool_loop(
     client: Any,
     model_name: str,
     app_context: AppContext,
+    structured_memory: SessionMemory,
+    session_id: str,
+    session_repo: SessionRepository,
 ) -> str:
     """Execute tool calls until the model returns final text."""
     response = initial_response.raw
@@ -106,6 +135,10 @@ def run_tool_loop(
             session_memory["tool_results"] = (
                 session_memory.get("tool_results", []) + [tool_result]
             )[-10:]
+            structured_memory = update_memory_from_tool_result(structured_memory, tool_result)
+            session_memory["memory"] = structured_memory
+            if tool_result.get("ok"):
+                save_session_memory(session_id, structured_memory, session_repo)
             accumulated_messages.append({"role": "tool", "content": summarized})
 
             response = client.responses.create(
