@@ -25,4 +25,7 @@ def build_openai_client(settings: Settings) -> OpenAI:
             "The `openai` Python package is not installed. Install it to use the chat runtime."
         ) from exc
 
-    return OpenAIClient(api_key=settings.openai_api_key)
+    client_kwargs: dict[str, Any] = {"api_key": settings.openai_api_key}
+    if settings.openai_base_url:
+        client_kwargs["base_url"] = settings.openai_base_url
+    return OpenAIClient(**client_kwargs)
