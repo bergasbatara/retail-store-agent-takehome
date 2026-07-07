@@ -6,40 +6,47 @@ from types import SimpleNamespace
 from retail_agent.agent.chat_runtime import run_agent_turn
 
 
-class FakeResponses:
+class FakeCompletions:
     def __init__(self):
         self.calls = []
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
-        if "previous_response_id" not in kwargs:
+        if len(self.calls) == 1:
             return SimpleNamespace(
-                id="resp-1",
-                output=[
+                choices=[
                     SimpleNamespace(
-                        type="function_call",
-                        name="find_customer",
-                        arguments=json.dumps({"query": "Sarah Chen"}),
-                        call_id="call-1",
+                        message=SimpleNamespace(
+                            content="",
+                            tool_calls=[
+                                SimpleNamespace(
+                                    id="call-1",
+                                    type="function",
+                                    function=SimpleNamespace(
+                                        name="find_customer",
+                                        arguments=json.dumps({"query": "Sarah Chen"}),
+                                    ),
+                                )
+                            ],
+                        )
                     )
                 ],
-                output_text=None,
             )
         return SimpleNamespace(
-            id="resp-2",
-            output=[
+            choices=[
                 SimpleNamespace(
-                    type="message",
-                    content=[SimpleNamespace(type="output_text", text="Found Sarah Chen.")],
+                    message=SimpleNamespace(
+                        content="Found Sarah Chen.",
+                        tool_calls=[],
+                    )
                 )
-            ],
-            output_text="Found Sarah Chen.",
+            ]
         )
 
 
 class FakeClient:
     def __init__(self):
-        self.responses = FakeResponses()
+        self.chat = SimpleNamespace(completions=FakeCompletions())
 
 
 def test_mocked_model_completes_tool_call_turn_end_to_end(app_context, monkeypatch):
@@ -54,4 +61,4 @@ def test_mocked_model_completes_tool_call_turn_end_to_end(app_context, monkeypat
     assert text == "Found Sarah Chen."
     memory = app_context.session_state["cli"]["memory"]
     assert memory.last_customer_id == "C-001"
-    assert len(fake_client.responses.calls) == 2
+    assert len(fake_client.chat.completions.calls) == 2

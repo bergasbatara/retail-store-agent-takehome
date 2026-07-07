@@ -54,6 +54,7 @@ def run_agent_turn(user_text: str, session_id: str, app_context: AppContext) -> 
     )
     final_text = run_tool_loop(
         initial_response=initial_response,
+        messages=messages,
         session_memory=session_memory,
         tools=tools,
         client=client,
@@ -94,10 +95,10 @@ def submit_with_tools(
     client: Any,
     model_name: str,
 ) -> ModelResponse:
-    """Submit a model request with tool definitions."""
-    response = client.responses.create(
+    """Submit a chat-completions request with tool definitions."""
+    response = client.chat.completions.create(
         model=model_name,
-        input=messages,
+        messages=messages,
         tools=tools,
     )
     return ModelResponse(raw=response)
@@ -105,6 +106,7 @@ def submit_with_tools(
 
 def run_tool_loop(
     initial_response: ModelResponse,
+    messages: list[dict],
     session_memory: dict,
     tools: list[dict],
     client: Any,
@@ -116,7 +118,7 @@ def run_tool_loop(
 ) -> str:
     """Execute tool calls until the model returns final text."""
     response = initial_response.raw
-    accumulated_messages: list[dict] = []
+    conversation_messages = list(messages)
 
     while True:
         tool_calls = _extract_tool_calls(response)
@@ -124,9 +126,13 @@ def run_tool_loop(
         if not tool_calls:
             if final_text:
                 return final_text
-            if accumulated_messages:
-                return accumulated_messages[-1]["content"]
+            if conversation_messages and conversation_messages[-1].get("role") == "assistant":
+                return str(conversation_messages[-1].get("content", ""))
             return "No response was produced."
+
+        assistant_message = _assistant_message_from_response(response)
+        if assistant_message is not None:
+            conversation_messages.append(assistant_message)
 
         for tool_call in tool_calls:
             arguments = _parse_tool_arguments(tool_call)
@@ -139,20 +145,20 @@ def run_tool_loop(
             session_memory["memory"] = structured_memory
             if tool_result.get("ok"):
                 save_session_memory(session_id, structured_memory, session_repo)
-            accumulated_messages.append({"role": "tool", "content": summarized})
-
-            response = client.responses.create(
-                model=model_name,
-                previous_response_id=_get_response_id(response),
-                input=[
-                    {
-                        "type": "function_call_output",
-                        "call_id": tool_call["call_id"],
-                        "output": json.dumps(tool_result),
-                    }
-                ],
-                tools=tools,
+            conversation_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call["call_id"],
+                    "content": json.dumps(tool_result, default=str),
+                }
             )
+            _ = summarized
+
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=conversation_messages,
+            tools=tools,
+        )
 
 
 def summarize_tool_result(tool_result: dict, /) -> str:
@@ -165,40 +171,35 @@ def summarize_tool_result(tool_result: dict, /) -> str:
 
 
 def _extract_tool_calls(response: Any) -> list[dict[str, str]]:
-    output_items = _maybe_get(response, "output") or []
+    choice = _first_choice(response)
+    message = _maybe_get(choice, "message")
+    raw_tool_calls = _maybe_get(message, "tool_calls") or []
     tool_calls: list[dict[str, str]] = []
-    for item in output_items:
+    for item in raw_tool_calls:
         item_type = _maybe_get(item, "type")
-        if item_type != "function_call":
+        if item_type not in {None, "function"}:
             continue
+        function = _maybe_get(item, "function")
         tool_calls.append(
             {
-                "name": _maybe_get(item, "name"),
-                "arguments": _maybe_get(item, "arguments") or "{}",
-                "call_id": _maybe_get(item, "call_id"),
+                "name": _maybe_get(function, "name"),
+                "arguments": _maybe_get(function, "arguments") or "{}",
+                "call_id": _maybe_get(item, "id"),
             }
         )
     return tool_calls
 
 
 def _extract_text(response: Any) -> str:
-    output_text = getattr(response, "output_text", None)
-    if isinstance(output_text, str) and output_text.strip():
-        return output_text
-
-    output_items = _maybe_get(response, "output") or []
-    text_parts: list[str] = []
-    for item in output_items:
-        item_type = _maybe_get(item, "type")
-        if item_type == "message":
-            content = _maybe_get(item, "content") or []
-            for part in content:
-                part_type = _maybe_get(part, "type")
-                if part_type in {"output_text", "text"}:
-                    text = _maybe_get(part, "text") or ""
-                    if text:
-                        text_parts.append(text)
-    return "\n".join(text_parts).strip()
+    choice = _first_choice(response)
+    message = _maybe_get(choice, "message")
+    content = _maybe_get(message, "content")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        text_parts = [str(part.get("text", "")) for part in content if isinstance(part, dict)]
+        return "\n".join(part for part in text_parts if part).strip()
+    return ""
 
 
 def _parse_tool_arguments(tool_call: dict[str, str]) -> dict:
@@ -208,13 +209,42 @@ def _parse_tool_arguments(tool_call: dict[str, str]) -> dict:
     return raw
 
 
-def _get_response_id(response: Any) -> str | None:
-    return _maybe_get(response, "id")
-
-
 def _bounded_messages(messages: list[dict]) -> list[dict]:
     history = [message for message in messages if message.get("role") != "system"]
     return history[-MAX_HISTORY_MESSAGES:]
+
+
+def _assistant_message_from_response(response: Any) -> dict[str, Any] | None:
+    choice = _first_choice(response)
+    message = _maybe_get(choice, "message")
+    if message is None:
+        return None
+
+    content = _maybe_get(message, "content")
+    tool_calls = _maybe_get(message, "tool_calls")
+    assistant_message: dict[str, Any] = {"role": "assistant"}
+    if content is not None:
+        assistant_message["content"] = content
+    else:
+        assistant_message["content"] = ""
+    if tool_calls:
+        assistant_message["tool_calls"] = [
+            {
+                "id": _maybe_get(tool_call, "id"),
+                "type": _maybe_get(tool_call, "type") or "function",
+                "function": {
+                    "name": _maybe_get(_maybe_get(tool_call, "function"), "name"),
+                    "arguments": _maybe_get(_maybe_get(tool_call, "function"), "arguments"),
+                },
+            }
+            for tool_call in tool_calls
+        ]
+    return assistant_message
+
+
+def _first_choice(response: Any) -> Any:
+    choices = _maybe_get(response, "choices") or []
+    return choices[0] if choices else None
 
 
 def _maybe_get(value: Any, key: str) -> Any:
