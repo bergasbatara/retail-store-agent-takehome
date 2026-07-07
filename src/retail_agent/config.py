@@ -83,7 +83,7 @@ def _load_project_dotenv(project_root: Path) -> None:
         key, value = line.split("=", 1)
         key = key.strip()
         value = value.strip()
-        if not key or key in os.environ:
+        if not key:
             continue
 
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
