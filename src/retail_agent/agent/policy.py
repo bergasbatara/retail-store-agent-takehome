@@ -26,6 +26,13 @@ BAD_PLAINTEXT_PATTERNS = (
 )
 
 INVENTED_DATE_PATTERN = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
+PSEUDO_TOOL_MARKERS = (
+    "<|tool_calls_begin|>",
+    "<|tool_call_begin|>",
+    "<|tool_sep|>",
+    "<|tool_call_end|>",
+    "<|tool_calls_end|>",
+)
 CLARIFICATION_PATTERNS = (
     r"\bwhich color\b",
     r"\bwhich size\b",
@@ -68,6 +75,8 @@ def response_satisfies_policy(
     normalized = final_text.strip().lower()
     if not normalized:
         return False
+    if contains_pseudo_tool_markup(final_text):
+        return False
     if any(re.search(pattern, normalized) for pattern in BAD_PLAINTEXT_PATTERNS):
         return False
     if INVENTED_DATE_PATTERN.search(final_text):
@@ -85,3 +94,8 @@ def is_true_clarification_or_error(final_text: str) -> bool:
     if any(re.search(pattern, normalized) for pattern in ERROR_PATTERNS):
         return True
     return False
+
+
+def contains_pseudo_tool_markup(final_text: str) -> bool:
+    """Return True when the model emitted tool-like markers as plain text."""
+    return any(marker in final_text for marker in PSEUDO_TOOL_MARKERS)

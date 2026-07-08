@@ -9,6 +9,7 @@ from typing import Any
 
 from retail_agent.agent.openai_client import build_openai_client
 from retail_agent.agent.policy import (
+    contains_pseudo_tool_markup,
     is_state_changing_request,
     is_true_clarification_or_error,
     response_satisfies_policy,
@@ -254,10 +255,16 @@ def _extract_text(response: Any) -> str:
     message = _maybe_get(choice, "message")
     content = _maybe_get(message, "content")
     if isinstance(content, str):
-        return content.strip()
+        text = content.strip()
+        if contains_pseudo_tool_markup(text):
+            return ""
+        return text
     if isinstance(content, list):
         text_parts = [str(part.get("text", "")) for part in content if isinstance(part, dict)]
-        return "\n".join(part for part in text_parts if part).strip()
+        text = "\n".join(part for part in text_parts if part).strip()
+        if contains_pseudo_tool_markup(text):
+            return ""
+        return text
     return ""
 
 
@@ -283,7 +290,10 @@ def _assistant_message_from_response(response: Any) -> dict[str, Any] | None:
     tool_calls = _maybe_get(message, "tool_calls")
     assistant_message: dict[str, Any] = {"role": "assistant"}
     if content is not None:
-        assistant_message["content"] = content
+        if isinstance(content, str) and contains_pseudo_tool_markup(content):
+            assistant_message["content"] = ""
+        else:
+            assistant_message["content"] = content
     else:
         assistant_message["content"] = ""
     if tool_calls:
