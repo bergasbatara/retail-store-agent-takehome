@@ -2,9 +2,30 @@
 
 from __future__ import annotations
 
+import re
+
 from retail_agent.db.repositories import CatalogRepository
 from retail_agent.exceptions import AmbiguityError, NotFoundError
 from retail_agent.types import ProductResolution, ResolvedSku
+
+
+PRODUCT_NAME_ALIASES = {
+    "canvas totes": "Canvas Tote",
+    "canvas tote": "Canvas Tote",
+    "classic tees": "Classic Tee",
+    "classic tee": "Classic Tee",
+    "standard tee": "Classic Tee",
+    "standard tees": "Classic Tee",
+    "tee": "Classic Tee",
+    "tees": "Classic Tee",
+    "hoodie": "Pullover Hoodie",
+    "hoodies": "Pullover Hoodie",
+    "pullover hoodies": "Pullover Hoodie",
+    "mug": "Ceramic Mug",
+    "mugs": "Ceramic Mug",
+    "sock": "Wool Socks",
+    "socks": "Wool Socks",
+}
 
 
 def resolve_product_reference(name_or_sku: str, repo: CatalogRepository) -> ProductResolution:
@@ -19,7 +40,7 @@ def resolve_product_reference(name_or_sku: str, repo: CatalogRepository) -> Prod
             candidates=(resolved,),
         )
 
-    candidates = repo.find_skus_by_product_name(name_or_sku)
+    resolved_name, candidates = _resolve_product_name_candidates(name_or_sku, repo)
     if not candidates:
         raise NotFoundError(f"No product found for '{name_or_sku}'.")
 
@@ -27,7 +48,7 @@ def resolve_product_reference(name_or_sku: str, repo: CatalogRepository) -> Prod
     first = resolved_candidates[0]
     return ProductResolution(
         query=name_or_sku,
-        product_name=first.product_name,
+        product_name=resolved_name or first.product_name,
         product_id=first.product_id,
         candidates=resolved_candidates,
     )
@@ -40,11 +61,11 @@ def resolve_variant(
     repo: CatalogRepository,
 ) -> ResolvedSku:
     """Resolve a concrete sellable SKU from product and variant details."""
-    candidates = repo.find_matching_variant(product_name, color, size)
+    resolved_name, candidates = _resolve_variant_candidates(product_name, color, size, repo)
     if not candidates:
         raise NotFoundError(f"No SKU found for '{product_name}'.")
     if len(candidates) > 1:
-        raise AmbiguityError(_build_variant_ambiguity_message(product_name, color, size, candidates))
+        raise AmbiguityError(_build_variant_ambiguity_message(resolved_name or product_name, color, size, candidates))
     return _row_to_resolved_sku(candidates[0], quantity=1)
 
 
@@ -91,3 +112,80 @@ def _build_variant_ambiguity_message(
         f"Multiple variants match '{product_name}'. "
         f"Please specify the missing variant detail. Options: {', '.join(_format_variant_candidate(row) for row in candidates)}"
     )
+
+
+def _resolve_product_name_candidates(
+    raw_name: str,
+    repo: CatalogRepository,
+) -> tuple[str | None, list[dict]]:
+    for candidate_name in _candidate_product_names(raw_name):
+        candidates = repo.find_skus_by_product_name(candidate_name)
+        if candidates:
+            return candidate_name, candidates
+    return None, []
+
+
+def _resolve_variant_candidates(
+    raw_name: str,
+    color: str | None,
+    size: str | None,
+    repo: CatalogRepository,
+) -> tuple[str | None, list[dict]]:
+    for candidate_name in _candidate_product_names(raw_name):
+        candidates = repo.find_matching_variant(candidate_name, color, size)
+        if candidates:
+            return candidate_name, candidates
+    return None, []
+
+
+def _candidate_product_names(raw_name: str) -> tuple[str, ...]:
+    stripped = " ".join(raw_name.strip().split())
+    if not stripped:
+        return ()
+
+    candidates: list[str] = []
+    _append_unique(candidates, stripped)
+
+    alias = PRODUCT_NAME_ALIASES.get(stripped.lower())
+    if alias is not None:
+        _append_unique(candidates, alias)
+
+    singularized = _singularize_product_name(stripped)
+    if singularized != stripped:
+        _append_unique(candidates, singularized)
+        alias = PRODUCT_NAME_ALIASES.get(singularized.lower())
+        if alias is not None:
+            _append_unique(candidates, alias)
+
+    normalized_case = _title_case_name(stripped)
+    if normalized_case != stripped:
+        _append_unique(candidates, normalized_case)
+        alias = PRODUCT_NAME_ALIASES.get(normalized_case.lower())
+        if alias is not None:
+            _append_unique(candidates, alias)
+
+    return tuple(candidates)
+
+
+def _singularize_product_name(name: str) -> str:
+    parts = name.split()
+    if not parts:
+        return name
+    last = parts[-1]
+    lowered = last.lower()
+    if lowered.endswith("ies") and len(last) > 3:
+        parts[-1] = last[:-3] + "y"
+    elif lowered.endswith("es") and len(last) > 2 and lowered not in {"tees"}:
+        parts[-1] = last[:-2]
+    elif lowered.endswith("s") and len(last) > 1:
+        parts[-1] = last[:-1]
+    return " ".join(parts)
+
+
+def _title_case_name(name: str) -> str:
+    return re.sub(r"\s+", " ", name).title()
+
+
+def _append_unique(values: list[str], candidate: str) -> None:
+    if candidate not in values:
+        values.append(candidate)
