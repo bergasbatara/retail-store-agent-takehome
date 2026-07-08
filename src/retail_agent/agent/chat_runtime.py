@@ -24,6 +24,7 @@ from retail_agent.session.memory import (
 
 
 MAX_HISTORY_MESSAGES = 12
+MAX_POLICY_RETRIES = 2
 
 
 @dataclass(frozen=True)
@@ -126,12 +127,27 @@ def run_tool_loop(
         (str(message["content"]) for message in reversed(messages) if message.get("role") == "user"),
         "",
     )
+    policy_retry_count = 0
+    used_tool_this_turn = False
 
     while True:
         tool_calls = _extract_tool_calls(response)
         final_text = _extract_text(response)
         if not tool_calls:
-            if not response_satisfies_policy(original_user_text, tool_calls, final_text):
+            effective_tool_calls = tool_calls or ([{"name": "completed_tool"}] if used_tool_this_turn else [])
+            if not response_satisfies_policy(original_user_text, effective_tool_calls, final_text):
+                if policy_retry_count < MAX_POLICY_RETRIES:
+                    assistant_message = _assistant_message_from_response(response)
+                    if assistant_message is not None:
+                        conversation_messages.append(assistant_message)
+                    conversation_messages.append(build_tool_retry_message(original_user_text))
+                    response = client.chat.completions.create(
+                        model=model_name,
+                        messages=conversation_messages,
+                        tools=tools,
+                    )
+                    policy_retry_count += 1
+                    continue
                 return _policy_failure_message(original_user_text)
             if final_text:
                 return final_text
@@ -147,6 +163,7 @@ def run_tool_loop(
             arguments = _parse_tool_arguments(tool_call)
             tool_result = execute_tool_call(tool_call["name"], arguments, app_context)
             summarized = summarize_tool_result(tool_result)
+            used_tool_this_turn = True
             session_memory["tool_results"] = (
                 session_memory.get("tool_results", []) + [tool_result]
             )[-10:]
@@ -269,3 +286,16 @@ def _policy_failure_message(user_text: str) -> str:
             "Retry with a tool-calling-capable response policy."
         )
     return "The model response did not satisfy runtime policy."
+
+
+def build_tool_retry_message(user_text: str) -> dict[str, str]:
+    """Build a corrective system instruction after a policy-violating response."""
+    return {
+        "role": "system",
+        "content": (
+            "The previous response violated runtime policy. "
+            "This request is a state-changing action and must use the appropriate tool now if it is actionable. "
+            "Do not ask for confirmation, do not invent dates or IDs, and do not answer with plain text only. "
+            f"Original user request: {user_text}"
+        ),
+    }
