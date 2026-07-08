@@ -26,6 +26,26 @@ BAD_PLAINTEXT_PATTERNS = (
 )
 
 INVENTED_DATE_PATTERN = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
+CLARIFICATION_PATTERNS = (
+    r"\bwhich color\b",
+    r"\bwhich size\b",
+    r"\bwhich customer\b",
+    r"\bwhich .* did you want\b",
+    r"\bplease specify\b",
+    r"\bcould you confirm\b",
+    r"\bwhat color\b",
+    r"\bwhat size\b",
+)
+ERROR_PATTERNS = (
+    r"\bambiguous\b",
+    r"\bnot found\b",
+    r"\bno .* found\b",
+    r"\binsufficient inventory\b",
+    r"\bmissing\b",
+    r"\bmust provide\b",
+    r"\bopen purchase order\b",
+    r"\bexceeds\b",
+)
 
 
 def is_state_changing_request(user_text: str) -> bool:
@@ -52,4 +72,16 @@ def response_satisfies_policy(
         return False
     if INVENTED_DATE_PATTERN.search(final_text):
         return False
+    return is_true_clarification_or_error(final_text)
+
+
+def is_true_clarification_or_error(final_text: str) -> bool:
+    """Return True when plain text is a narrow clarification or concrete error."""
+    normalized = final_text.strip().lower()
+    if not normalized:
+        return False
+    if any(re.search(pattern, normalized) for pattern in CLARIFICATION_PATTERNS):
+        return True
+    if any(re.search(pattern, normalized) for pattern in ERROR_PATTERNS):
+        return True
     return False

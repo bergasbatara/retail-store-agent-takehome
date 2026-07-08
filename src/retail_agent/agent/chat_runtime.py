@@ -8,12 +8,17 @@ from datetime import date
 from typing import Any
 
 from retail_agent.agent.openai_client import build_openai_client
-from retail_agent.agent.policy import is_state_changing_request, response_satisfies_policy
+from retail_agent.agent.policy import (
+    is_state_changing_request,
+    is_true_clarification_or_error,
+    response_satisfies_policy,
+)
 from retail_agent.agent.prompts import system_prompt
 from retail_agent.agent.tool_executor import execute_tool_call
 from retail_agent.agent.tool_schemas import build_tool_definitions
 from retail_agent.cli import AppContext
 from retail_agent.db.repositories import SessionRepository
+from retail_agent.presenters.messages import render_clarification
 from retail_agent.presenters.tool_results import (
     STATE_CHANGING_TOOLS,
     render_state_change_result,
@@ -144,6 +149,7 @@ def run_tool_loop(
     policy_retry_count = 0
     used_tool_this_turn = False
     successful_state_change_results: list[dict[str, Any]] = []
+    last_tool_error_result: dict[str, Any] | None = None
 
     while True:
         tool_calls = _extract_tool_calls(response)
@@ -167,6 +173,10 @@ def run_tool_loop(
                 return _policy_failure_message(original_user_text)
             if successful_state_change_results:
                 return render_state_change_result(successful_state_change_results[-1])
+            if last_tool_error_result is not None:
+                return _render_tool_error(last_tool_error_result)
+            if require_tool_choice and is_true_clarification_or_error(final_text):
+                return _render_state_change_clarification(final_text)
             if final_text:
                 return final_text
             if conversation_messages and conversation_messages[-1].get("role") == "assistant":
@@ -184,6 +194,8 @@ def run_tool_loop(
             used_tool_this_turn = True
             if tool_result.get("ok") and tool_result.get("tool") in STATE_CHANGING_TOOLS:
                 successful_state_change_results.append(tool_result)
+            if not tool_result.get("ok"):
+                last_tool_error_result = tool_result
             session_memory["tool_results"] = (
                 session_memory.get("tool_results", []) + [tool_result]
             )[-10:]
@@ -327,3 +339,17 @@ def _tool_choice_for_request(require_tool_choice: bool) -> str | None:
     if require_tool_choice:
         return "required"
     return None
+
+
+def _render_state_change_clarification(final_text: str) -> str:
+    if "?" in final_text:
+        return render_clarification(final_text)
+    return final_text.strip()
+
+
+def _render_tool_error(tool_result: dict[str, Any]) -> str:
+    error = tool_result.get("error", {})
+    message = str(error.get("message", "Unknown tool error")).strip()
+    if "?" in message:
+        return render_clarification(message)
+    return message
