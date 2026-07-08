@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from retail_agent.agent.openai_client import build_openai_client
+from retail_agent.agent.policy import is_state_changing_request, response_satisfies_policy
 from retail_agent.agent.prompts import system_prompt
 from retail_agent.agent.tool_executor import execute_tool_call
 from retail_agent.agent.tool_schemas import build_tool_definitions
@@ -81,8 +83,9 @@ def build_messages(
 ) -> list[dict]:
     """Build the message list sent to the model."""
     history = session_memory.get("messages", [])
+    current_date = date.today().isoformat()
     return [
-        {"role": "system", "content": system_prompt()},
+        {"role": "system", "content": system_prompt(current_date)},
         {"role": "system", "content": inject_memory_hints(structured_memory)},
         *history,
         {"role": "user", "content": user_text},
@@ -119,11 +122,17 @@ def run_tool_loop(
     """Execute tool calls until the model returns final text."""
     response = initial_response.raw
     conversation_messages = list(messages)
+    original_user_text = next(
+        (str(message["content"]) for message in reversed(messages) if message.get("role") == "user"),
+        "",
+    )
 
     while True:
         tool_calls = _extract_tool_calls(response)
         final_text = _extract_text(response)
         if not tool_calls:
+            if not response_satisfies_policy(original_user_text, tool_calls, final_text):
+                return _policy_failure_message(original_user_text)
             if final_text:
                 return final_text
             if conversation_messages and conversation_messages[-1].get("role") == "assistant":
@@ -251,3 +260,12 @@ def _maybe_get(value: Any, key: str) -> Any:
     if isinstance(value, dict):
         return value.get(key)
     return getattr(value, key, None)
+
+
+def _policy_failure_message(user_text: str) -> str:
+    if is_state_changing_request(user_text):
+        return (
+            "The model did not use the required tool for this state-changing request. "
+            "Retry with a tool-calling-capable response policy."
+        )
+    return "The model response did not satisfy runtime policy."
