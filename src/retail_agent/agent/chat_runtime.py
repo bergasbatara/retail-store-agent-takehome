@@ -49,11 +49,13 @@ def run_agent_turn(user_text: str, session_id: str, app_context: AppContext) -> 
     messages = build_messages(session_memory, user_text, structured_memory)
     tools = build_tool_definitions()
     client = build_openai_client(app_context.settings)
+    require_tool_choice = is_state_changing_request(user_text)
     initial_response = submit_with_tools(
         messages=messages,
         tools=tools,
         client=client,
         model_name=app_context.settings.model_name,
+        tool_choice=_tool_choice_for_request(require_tool_choice),
     )
     final_text = run_tool_loop(
         initial_response=initial_response,
@@ -66,6 +68,7 @@ def run_agent_turn(user_text: str, session_id: str, app_context: AppContext) -> 
         structured_memory=structured_memory,
         session_id=session_id,
         session_repo=repo,
+        require_tool_choice=require_tool_choice,
     )
     session_memory["messages"] = _bounded_messages(
         session_memory.get("messages", [])
@@ -98,12 +101,18 @@ def submit_with_tools(
     tools: list[dict],
     client: Any,
     model_name: str,
+    tool_choice: str | None = None,
 ) -> ModelResponse:
     """Submit a chat-completions request with tool definitions."""
+    request_kwargs: dict[str, Any] = {
+        "model": model_name,
+        "messages": messages,
+        "tools": tools,
+    }
+    if tool_choice is not None:
+        request_kwargs["tool_choice"] = tool_choice
     response = client.chat.completions.create(
-        model=model_name,
-        messages=messages,
-        tools=tools,
+        **request_kwargs,
     )
     return ModelResponse(raw=response)
 
@@ -119,6 +128,7 @@ def run_tool_loop(
     structured_memory: SessionMemory,
     session_id: str,
     session_repo: SessionRepository,
+    require_tool_choice: bool,
 ) -> str:
     """Execute tool calls until the model returns final text."""
     response = initial_response.raw
@@ -145,6 +155,7 @@ def run_tool_loop(
                         model=model_name,
                         messages=conversation_messages,
                         tools=tools,
+                        tool_choice=_tool_choice_for_request(require_tool_choice),
                     )
                     policy_retry_count += 1
                     continue
@@ -184,6 +195,7 @@ def run_tool_loop(
             model=model_name,
             messages=conversation_messages,
             tools=tools,
+            tool_choice=_tool_choice_for_request(require_tool_choice and not used_tool_this_turn),
         )
 
 
@@ -294,8 +306,15 @@ def build_tool_retry_message(user_text: str) -> dict[str, str]:
         "role": "system",
         "content": (
             "The previous response violated runtime policy. "
-            "This request is a state-changing action and must use the appropriate tool now if it is actionable. "
+            "This request is a state-changing action. Your very next response must be a tool call if the request is actionable. "
             "Do not ask for confirmation, do not invent dates or IDs, and do not answer with plain text only. "
+            "If you need clarification, use lookup tools first when possible and ask only for the missing discriminator. "
             f"Original user request: {user_text}"
         ),
     }
+
+
+def _tool_choice_for_request(require_tool_choice: bool) -> str | None:
+    if require_tool_choice:
+        return "required"
+    return None
