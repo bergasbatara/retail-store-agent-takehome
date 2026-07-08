@@ -33,6 +33,20 @@ promotion windows, what "revenue" and "margin" mean). Today's date is 2026-06-19
 Include a README with the exact command to start it. Stack is your choice: any language, any
 database, any LLM with tool calling.
 
+## Local Run
+
+CLI:
+
+```bash
+PYTHONPATH=src python3 -m retail_agent
+```
+
+Streamlit UI:
+
+```bash
+PYTHONPATH=src streamlit run src/retail_agent/streamlit_app.py
+```
+
 ## Prompts
 
 Here are 10 prompts to test against. We will test on these plus **115 additional prompts not
