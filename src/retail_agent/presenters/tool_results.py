@@ -39,28 +39,30 @@ def render_state_change_result(tool_result: dict[str, Any]) -> str:
 def _render_sale_payload(payload: dict[str, Any]) -> str:
     customer = payload.get("customer_name") or payload.get("customer_id") or "Walk-in"
     lines = [
-        f"Sale {payload.get('order_id')}",
-        f"Date: {payload.get('order_date')}",
-        f"Payment: {payload.get('payment_method')}",
-        f"Customer: {customer}",
+        f"**Sale {payload.get('order_id')}**",
+        f"- **Date:** {payload.get('order_date')}",
+        f"- **Payment:** {payload.get('payment_method')}",
+        f"- **Customer:** {customer}",
     ]
     receipt = payload.get("receipt")
     if isinstance(receipt, dict):
         raw_lines = receipt.get("lines") or []
         if raw_lines:
-            lines.append("Items:")
+            lines.append("")
+            lines.append("**Items**")
             for line in raw_lines:
                 if not isinstance(line, dict):
                     continue
                 variant = _variant_text(line.get("color"), line.get("size"))
                 lines.append(
-                    f"- {line.get('product_name')}{variant} x{line.get('quantity')} @ {_format_money(line.get('paid_unit_price'))} = {_format_money(_line_total(line))}"
+                    f"- {line.get('product_name')}{variant} x{line.get('quantity')} at {_format_money(line.get('paid_unit_price'))} each = {_format_money(_line_total(line))}"
                 )
     lines.extend(
         [
-            f"Subtotal: {_format_money(payload.get('subtotal'))}",
-            f"Discount: {_format_money(payload.get('total_discount'))}",
-            f"Total: {_format_money(payload.get('total_paid'))}",
+            "",
+            f"- **Subtotal:** {_format_money(payload.get('subtotal'))}",
+            f"- **Discount:** {_format_money(payload.get('total_discount'))}",
+            f"- **Total:** {_format_money(payload.get('total_paid'))}",
         ]
     )
     return "\n".join(lines)
@@ -69,14 +71,14 @@ def _render_sale_payload(payload: dict[str, Any]) -> str:
 def _render_return_payload(payload: dict[str, Any]) -> str:
     return "\n".join(
         [
-            f"Return {payload.get('return_id')}",
-            f"Order: {payload.get('order_id')}",
-            f"Date: {payload.get('return_date')}",
-            f"SKU: {payload.get('sku')}",
-            f"Quantity: {payload.get('quantity')}",
-            f"Condition: {payload.get('condition')}",
-            f"Refund: {_format_money(payload.get('refund_amount'))}",
-            f"Restocked: {payload.get('restocked_quantity')}",
+            f"**Return {payload.get('return_id')}**",
+            f"- **Order:** {payload.get('order_id')}",
+            f"- **Date:** {payload.get('return_date')}",
+            f"- **SKU:** {payload.get('sku')}",
+            f"- **Quantity:** {payload.get('quantity')}",
+            f"- **Condition:** {payload.get('condition')}",
+            f"- **Refund:** {_format_money(payload.get('refund_amount'))}",
+            f"- **Restocked:** {payload.get('restocked_quantity')}",
         ]
     )
 
@@ -84,12 +86,12 @@ def _render_return_payload(payload: dict[str, Any]) -> str:
 def _render_purchase_order_payload(payload: dict[str, Any]) -> str:
     return "\n".join(
         [
-            f"Purchase Order {payload.get('purchase_order_id')}",
-            f"Supplier: {payload.get('supplier_name')} ({payload.get('supplier_id')})",
-            f"Order Date: {payload.get('order_date')}",
-            f"Status: {payload.get('status')}",
-            f"Lines: {payload.get('line_count')}",
-            f"Total Units: {payload.get('total_units')}",
+            f"**Purchase Order {payload.get('purchase_order_id')}**",
+            f"- **Supplier:** {payload.get('supplier_name')} ({payload.get('supplier_id')})",
+            f"- **Order Date:** {payload.get('order_date')}",
+            f"- **Status:** {payload.get('status')}",
+            f"- **Lines:** {payload.get('line_count')}",
+            f"- **Total Units:** {payload.get('total_units')}",
         ]
     )
 
@@ -98,8 +100,8 @@ def _render_reorder_payload(payload: dict[str, Any]) -> str:
     purchase_orders = payload.get("purchase_orders") or []
     count = payload.get("count", len(purchase_orders))
     if not purchase_orders:
-        return f"Reorder complete. Created {count} purchase orders."
-    lines = [f"Reorder complete. Created {count} purchase orders."]
+        return f"**Reorder Complete**\n\n- **Created:** {count} purchase orders"
+    lines = [f"**Reorder Complete**", "", f"- **Created:** {count} purchase orders"]
     for purchase_order in purchase_orders:
         if not isinstance(purchase_order, dict):
             continue
@@ -112,11 +114,11 @@ def _render_reorder_payload(payload: dict[str, Any]) -> str:
 def _render_promotion_payload(payload: dict[str, Any]) -> str:
     return "\n".join(
         [
-            f"Promotion {payload.get('promo_id')}",
-            f"Description: {payload.get('description')}",
-            f"Scope: {payload.get('scope_type')}={payload.get('scope_ref')}",
-            f"Percent Off: {payload.get('percent_off')}%",
-            f"Dates: {payload.get('start_date')} to {payload.get('end_date')}",
+            f"**Promotion {payload.get('promo_id')}**",
+            f"- **Description:** {payload.get('description')}",
+            f"- **Scope:** {payload.get('scope_type')}={payload.get('scope_ref')}",
+            f"- **Percent Off:** {payload.get('percent_off')}%",
+            f"- **Dates:** {payload.get('start_date')} to {payload.get('end_date')}",
         ]
     )
 

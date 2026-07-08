@@ -59,7 +59,7 @@ def main() -> None:
 
     for message in messages:
         with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+            _render_chat_content(message["content"])
 
     prompt = st.chat_input("Ask the retail agent to do something")
     if not prompt:
@@ -67,7 +67,7 @@ def main() -> None:
 
     messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
-        st.markdown(prompt)
+        _render_chat_content(prompt)
 
     with st.chat_message("assistant"):
         with st.spinner("Working..."):
@@ -75,9 +75,25 @@ def main() -> None:
                 response = run_agent_turn(prompt, session_id=session_id, app_context=app_context)
             except Exception as exc:  # pragma: no cover - UI boundary
                 response = f"Error: {exc}"
-            st.markdown(response)
+            _render_chat_content(response)
 
     messages.append({"role": "assistant", "content": response})
+
+
+def _render_chat_content(content: str) -> None:
+    """Render message content while preserving plain-text line breaks."""
+    if _looks_like_markdown(content):
+        st.markdown(content)
+        return
+    st.markdown(content.replace("\n", "  \n"))
+
+
+def _looks_like_markdown(content: str) -> bool:
+    stripped = content.strip()
+    if not stripped:
+        return False
+    markdown_markers = ("- ", "* ", "1. ", "**", "```", "## ", "# ")
+    return any(line.startswith(markdown_markers) for line in stripped.splitlines())
 
 
 if __name__ == "__main__":

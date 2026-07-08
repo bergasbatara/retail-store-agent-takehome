@@ -12,10 +12,14 @@ def render_clarification(message: str) -> str:
 
 def render_success_summary(payload: dict) -> str:
     """Render a compact deterministic summary for a successful payload."""
-    parts: list[str] = []
+    if not payload:
+        return "Success."
+
+    lines = ["**Success**"]
     for key in sorted(payload):
-        parts.append(f"{key}={_render_value(payload[key])}")
-    return "Success: " + ", ".join(parts) if parts else "Success."
+        label = key.replace("_", " ").title()
+        lines.append(f"- **{label}:** {_render_value(payload[key])}")
+    return "\n".join(lines)
 
 
 def _render_value(value: Any) -> str:
