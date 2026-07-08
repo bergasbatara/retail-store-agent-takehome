@@ -27,6 +27,21 @@ PRODUCT_NAME_ALIASES = {
     "socks": "Wool Socks",
 }
 
+COLOR_ALIASES = {
+    "grey": "Gray",
+}
+
+SIZE_ALIASES = {
+    "small": "S",
+    "s": "S",
+    "medium": "M",
+    "med": "M",
+    "m": "M",
+    "large": "L",
+    "lg": "L",
+    "l": "L",
+}
+
 
 def resolve_product_reference(name_or_sku: str, repo: CatalogRepository) -> ProductResolution:
     """Resolve a SKU or product name into a product-level candidate set."""
@@ -61,11 +76,25 @@ def resolve_variant(
     repo: CatalogRepository,
 ) -> ResolvedSku:
     """Resolve a concrete sellable SKU from product and variant details."""
-    resolved_name, candidates = _resolve_variant_candidates(product_name, color, size, repo)
+    normalized_color = _normalize_color(color)
+    normalized_size = _normalize_size(size)
+    resolved_name, candidates = _resolve_variant_candidates(
+        product_name,
+        normalized_color,
+        normalized_size,
+        repo,
+    )
     if not candidates:
         raise NotFoundError(f"No SKU found for '{product_name}'.")
     if len(candidates) > 1:
-        raise AmbiguityError(_build_variant_ambiguity_message(resolved_name or product_name, color, size, candidates))
+        raise AmbiguityError(
+            _build_variant_ambiguity_message(
+                resolved_name or product_name,
+                normalized_color,
+                normalized_size,
+                candidates,
+            )
+        )
     return _row_to_resolved_sku(candidates[0], quantity=1)
 
 
@@ -189,3 +218,27 @@ def _title_case_name(name: str) -> str:
 def _append_unique(values: list[str], candidate: str) -> None:
     if candidate not in values:
         values.append(candidate)
+
+
+def _normalize_color(color: str | None) -> str | None:
+    if color is None:
+        return None
+    stripped = " ".join(color.strip().split())
+    if not stripped:
+        return None
+    alias = COLOR_ALIASES.get(stripped.lower())
+    if alias is not None:
+        return alias
+    return _title_case_name(stripped)
+
+
+def _normalize_size(size: str | None) -> str | None:
+    if size is None:
+        return None
+    stripped = " ".join(size.strip().split())
+    if not stripped:
+        return None
+    alias = SIZE_ALIASES.get(stripped.lower())
+    if alias is not None:
+        return alias
+    return stripped.upper()

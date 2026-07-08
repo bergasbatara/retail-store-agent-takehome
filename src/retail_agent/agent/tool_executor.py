@@ -21,7 +21,7 @@ from retail_agent.db.repositories import (
 )
 from retail_agent.domain.catalog import resolve_product_reference, resolve_variant
 from retail_agent.domain.customers import find_customer_candidates
-from retail_agent.exceptions import DomainError
+from retail_agent.exceptions import DomainError, ValidationError
 from retail_agent.money import to_decimal
 from retail_agent.services.order_service import OrderRepositories, create_sale, create_walk_in_sale
 from retail_agent.services.pricing_service import compute_effective_unit_price
@@ -64,6 +64,16 @@ def execute_tool_call(name: str, arguments: dict, app_context: AppContext) -> di
     try:
         payload = handler(arguments, app_context)
         return {"ok": True, "tool": name, "result": payload}
+    except KeyError as exc:
+        missing_key = str(exc.args[0]) if exc.args else "unknown"
+        return {
+            "ok": False,
+            "tool": name,
+            "error": {
+                "type": "ValidationError",
+                "message": _missing_argument_message(name, missing_key),
+            },
+        }
     except DomainError as exc:
         return {"ok": False, "tool": name, "error": {"type": exc.__class__.__name__, "message": str(exc)}}
     except Exception as exc:  # pragma: no cover - defensive boundary
@@ -245,6 +255,43 @@ def _sale_item_input(raw: dict[str, Any]) -> SaleItemInput:
         sku=raw.get("sku"),
         color=raw.get("color"),
         size=raw.get("size"),
+    )
+
+
+def _missing_argument_message(tool_name: str, missing_key: str) -> str:
+    specific_messages = {
+        ("find_product", "query"): "Need clarification: which product should I look up?",
+        ("find_customer", "query"): "Need clarification: which customer should I look up?",
+        ("ring_up_sale", "items"): "Need clarification: which items should I ring up?",
+        ("ring_up_sale", "payment_method"): "Need clarification: what payment method should I use?",
+        ("ring_up_sale", "order_date"): "Need clarification: what sale date should I use?",
+        ("ring_up_sale", "product_name"): "Need clarification: which product should I ring up?",
+        ("ring_up_sale", "quantity"): "Need clarification: how many units should I ring up?",
+        ("reorder_low_stock", "order_date"): "Need clarification: what reorder date should I use?",
+        ("receive_purchase_order", "purchase_order_id"): "Need clarification: which purchase order should I receive?",
+        ("receive_purchase_order", "receive_date"): "Need clarification: what receipt date should I use?",
+        ("receive_purchase_order", "received_items"): "Need clarification: which received items should I record?",
+        ("process_return", "order_id"): "Need clarification: which order is being returned?",
+        ("process_return", "sku_or_ref"): "Need clarification: which item from the order is being returned?",
+        ("process_return", "quantity"): "Need clarification: how many units are being returned?",
+        ("process_return", "condition"): "Need clarification: is the return in good or damaged condition?",
+        ("process_return", "return_date"): "Need clarification: what return date should I use?",
+        ("create_promotion", "scope_type"): "Need clarification: is the promotion for a product or a category?",
+        ("create_promotion", "scope_ref"): "Need clarification: which product or category should the promotion target?",
+        ("create_promotion", "percent_off"): "Need clarification: what percent discount should I apply?",
+        ("create_promotion", "start_date"): "Need clarification: what promotion start date should I use?",
+        ("create_promotion", "end_date"): "Need clarification: what promotion end date should I use?",
+        ("create_promotion", "description"): "Need clarification: how should I describe the promotion?",
+        ("get_product_price", "sku"): "Need clarification: which SKU should I price?",
+        ("get_product_price", "sale_date"): "Need clarification: what sale date should I price for?",
+        ("top_products_by_margin", "limit"): "Need clarification: how many products should I return?",
+        ("top_products_by_margin", "period_start"): "Need clarification: what margin report start date should I use?",
+        ("top_products_by_margin", "period_end"): "Need clarification: what margin report end date should I use?",
+        ("stockout_risk_report", "as_of_date"): "Need clarification: what stockout report date should I use?",
+    }
+    return specific_messages.get(
+        (tool_name, missing_key),
+        f"Missing required argument '{missing_key}' for tool '{tool_name}'.",
     )
 
 

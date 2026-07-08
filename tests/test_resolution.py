@@ -28,9 +28,11 @@ def test_exact_sku_and_exact_customer_matches_work(catalog_repo, customer_repo):
 def test_plural_and_alias_product_names_resolve(catalog_repo):
     tote = resolve_product_reference("Canvas Totes", catalog_repo)
     tees = resolve_variant("Classic Tees", "Blue", "M", catalog_repo)
+    tees_spelled_out = resolve_variant("Classic Tee", "Blue", "Medium", catalog_repo)
     hoodie = resolve_variant("hoodie", "Gray", "M", catalog_repo)
 
     assert tote.product_name == "Canvas Tote"
     assert tote.candidates[0].sku == "TOTE"
     assert tees.sku == "TEE-BLU-M"
+    assert tees_spelled_out.sku == "TEE-BLU-M"
     assert hoodie.sku == "HOOD-GRY-M"

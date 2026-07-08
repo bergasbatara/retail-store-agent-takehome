@@ -271,8 +271,12 @@ def _extract_text(response: Any) -> str:
 def _parse_tool_arguments(tool_call: dict[str, str]) -> dict:
     raw = tool_call.get("arguments", "{}")
     if isinstance(raw, str):
-        return json.loads(raw)
-    return raw
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return raw if isinstance(raw, dict) else {}
 
 
 def _bounded_messages(messages: list[dict]) -> list[dict]:

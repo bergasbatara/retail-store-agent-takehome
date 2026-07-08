@@ -24,3 +24,10 @@ def test_tool_arguments_are_validated_and_dispatched(app_context):
     assert failure["ok"] is False
     assert failure["error"]["type"] == "AmbiguityError"
 
+
+def test_missing_tool_arguments_return_friendly_validation_error(app_context):
+    result = execute_tool_call("find_product", {}, app_context)
+
+    assert result["ok"] is False
+    assert result["error"]["type"] == "ValidationError"
+    assert result["error"]["message"] == "Need clarification: which product should I look up?"

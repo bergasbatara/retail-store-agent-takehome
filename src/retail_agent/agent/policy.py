@@ -26,12 +26,10 @@ BAD_PLAINTEXT_PATTERNS = (
 )
 
 INVENTED_DATE_PATTERN = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
-PSEUDO_TOOL_MARKERS = (
-    "<|tool_calls_begin|>",
-    "<|tool_call_begin|>",
-    "<|tool_sep|>",
-    "<|tool_call_end|>",
-    "<|tool_calls_end|>",
+PSEUDO_TOOL_PATTERNS = (
+    re.compile(r"<\|\s*tool_(?:calls_begin|call_begin|sep|call_end|calls_end)\s*\|>", re.IGNORECASE),
+    re.compile(r"\btool_(?:calls_begin|call_begin|sep|call_end|calls_end)\b", re.IGNORECASE),
+    re.compile(r"\bfunctions?\b.{0,40}\btool_(?:sep|call_begin|call_end|calls_begin|calls_end)\b", re.IGNORECASE),
 )
 CLARIFICATION_PATTERNS = (
     r"\bwhich color\b",
@@ -98,4 +96,4 @@ def is_true_clarification_or_error(final_text: str) -> bool:
 
 def contains_pseudo_tool_markup(final_text: str) -> bool:
     """Return True when the model emitted tool-like markers as plain text."""
-    return any(marker in final_text for marker in PSEUDO_TOOL_MARKERS)
+    return any(pattern.search(final_text) for pattern in PSEUDO_TOOL_PATTERNS)
