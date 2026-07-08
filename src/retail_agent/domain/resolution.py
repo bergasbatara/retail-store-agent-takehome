@@ -66,7 +66,7 @@ def resolve_return_target(
 def build_ambiguity_message(candidates: list[dict]) -> str:
     """Build a user-facing ambiguity message from candidate rows."""
     formatted = ", ".join(_variant_descriptor(candidate) for candidate in candidates)
-    return f"Ambiguous match. Candidates: {formatted}"
+    return f"Ambiguous match. Please specify the exact item. Options: {formatted}"
 
 
 def _with_quantity(candidate: ResolvedSku, quantity: int) -> ResolvedSku:

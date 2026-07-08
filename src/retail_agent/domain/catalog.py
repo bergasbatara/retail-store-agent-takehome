@@ -44,9 +44,7 @@ def resolve_variant(
     if not candidates:
         raise NotFoundError(f"No SKU found for '{product_name}'.")
     if len(candidates) > 1:
-        raise AmbiguityError(
-            f"Multiple variants match '{product_name}': {', '.join(_format_variant_candidate(row) for row in candidates)}"
-        )
+        raise AmbiguityError(_build_variant_ambiguity_message(product_name, color, size, candidates))
     return _row_to_resolved_sku(candidates[0], quantity=1)
 
 
@@ -71,3 +69,25 @@ def _format_variant_candidate(row: dict) -> str:
         parts.append(str(row["size"]))
     parts.append(f"[{row['sku']}]")
     return " ".join(parts)
+
+
+def _build_variant_ambiguity_message(
+    product_name: str,
+    color: str | None,
+    size: str | None,
+    candidates: list[dict],
+) -> str:
+    if color is None and len({row.get("color") for row in candidates}) > 1:
+        colors = ", ".join(
+            sorted({str(row["color"]) for row in candidates if row.get("color")})
+        )
+        return f"Multiple {product_name} variants match. Which color did you want? Options: {colors}."
+    if size is None and len({row.get("size") for row in candidates}) > 1:
+        sizes = ", ".join(
+            sorted({str(row["size"]) for row in candidates if row.get("size")})
+        )
+        return f"Multiple {product_name} variants match. Which size did you want? Options: {sizes}."
+    return (
+        f"Multiple variants match '{product_name}'. "
+        f"Please specify the missing variant detail. Options: {', '.join(_format_variant_candidate(row) for row in candidates)}"
+    )

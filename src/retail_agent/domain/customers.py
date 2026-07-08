@@ -22,7 +22,9 @@ def resolve_customer(name_or_id: str | None, repo: CustomerRepository) -> Custom
         raise NotFoundError(f"No customer found for '{name_or_id}'.")
     if len(candidates) > 1:
         names = ", ".join(f"{customer.name} [{customer.customer_id}]" for customer in candidates)
-        raise AmbiguityError(f"Multiple customers match '{name_or_id}': {names}")
+        raise AmbiguityError(
+            f"Multiple customers match '{name_or_id}'. Which customer did you mean? Options: {names}"
+        )
     return candidates[0]
 
 
