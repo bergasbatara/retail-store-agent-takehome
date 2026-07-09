@@ -43,17 +43,42 @@ SIZE_ALIASES = {
 }
 
 
+def candidate_reference_terms(raw_value: str) -> tuple[str, ...]:
+    """Return normalized reference candidates for product names and SKU-like inputs."""
+    stripped = " ".join(raw_value.strip().split())
+    if not stripped:
+        return ()
+
+    candidates: list[str] = []
+    _append_reference_variants(candidates, stripped)
+
+    deindexed = _strip_numeric_suffix(stripped)
+    if deindexed != stripped:
+        _append_reference_variants(candidates, deindexed)
+
+    sku_words = _sku_like_words_to_phrase(stripped)
+    if sku_words and sku_words != stripped:
+        _append_reference_variants(candidates, sku_words)
+
+    deindexed_words = _sku_like_words_to_phrase(deindexed)
+    if deindexed_words and deindexed_words not in {stripped, deindexed}:
+        _append_reference_variants(candidates, deindexed_words)
+
+    return tuple(candidates)
+
+
 def resolve_product_reference(name_or_sku: str, repo: CatalogRepository) -> ProductResolution:
     """Resolve a SKU or product name into a product-level candidate set."""
-    sku_match = repo.get_sku(name_or_sku)
-    if sku_match is not None:
-        resolved = _row_to_resolved_sku(sku_match, quantity=1)
-        return ProductResolution(
-            query=name_or_sku,
-            product_name=resolved.product_name,
-            product_id=resolved.product_id,
-            candidates=(resolved,),
-        )
+    for reference in candidate_reference_terms(name_or_sku):
+        sku_match = repo.get_sku(reference)
+        if sku_match is not None:
+            resolved = _row_to_resolved_sku(sku_match, quantity=1)
+            return ProductResolution(
+                query=name_or_sku,
+                product_name=resolved.product_name,
+                product_id=resolved.product_id,
+                candidates=(resolved,),
+            )
 
     resolved_name, candidates = _resolve_product_name_candidates(name_or_sku, repo)
     if not candidates:
@@ -147,7 +172,7 @@ def _resolve_product_name_candidates(
     raw_name: str,
     repo: CatalogRepository,
 ) -> tuple[str | None, list[dict]]:
-    for candidate_name in _candidate_product_names(raw_name):
+    for candidate_name in candidate_reference_terms(raw_name):
         candidates = repo.find_skus_by_product_name(candidate_name)
         if candidates:
             return candidate_name, candidates
@@ -160,19 +185,18 @@ def _resolve_variant_candidates(
     size: str | None,
     repo: CatalogRepository,
 ) -> tuple[str | None, list[dict]]:
-    for candidate_name in _candidate_product_names(raw_name):
+    for candidate_name in candidate_reference_terms(raw_name):
         candidates = repo.find_matching_variant(candidate_name, color, size)
         if candidates:
             return candidate_name, candidates
     return None, []
 
 
-def _candidate_product_names(raw_name: str) -> tuple[str, ...]:
+def _append_reference_variants(candidates: list[str], raw_name: str) -> None:
     stripped = " ".join(raw_name.strip().split())
     if not stripped:
-        return ()
+        return
 
-    candidates: list[str] = []
     _append_unique(candidates, stripped)
 
     alias = PRODUCT_NAME_ALIASES.get(stripped.lower())
@@ -193,8 +217,6 @@ def _candidate_product_names(raw_name: str) -> tuple[str, ...]:
         if alias is not None:
             _append_unique(candidates, alias)
 
-    return tuple(candidates)
-
 
 def _singularize_product_name(name: str) -> str:
     parts = name.split()
@@ -213,6 +235,20 @@ def _singularize_product_name(name: str) -> str:
 
 def _title_case_name(name: str) -> str:
     return re.sub(r"\s+", " ", name).title()
+
+
+def _strip_numeric_suffix(value: str) -> str:
+    return re.sub(r"[-_]\d{1,4}$", "", value.strip())
+
+
+def _sku_like_words_to_phrase(value: str) -> str | None:
+    normalized = value.replace("_", "-").strip("- ")
+    if "-" not in normalized:
+        return None
+    words = [part for part in normalized.split("-") if part and not part.isdigit()]
+    if not words:
+        return None
+    return " ".join(words)
 
 
 def _append_unique(values: list[str], candidate: str) -> None:

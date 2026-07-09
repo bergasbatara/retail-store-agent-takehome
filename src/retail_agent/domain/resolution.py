@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from retail_agent.domain.catalog import resolve_product_reference, resolve_variant
+from retail_agent.domain.catalog import candidate_reference_terms, resolve_product_reference, resolve_variant
 from retail_agent.db.repositories import CatalogRepository, OrderRepository
 from retail_agent.exceptions import AmbiguityError, NotFoundError, ValidationError
 from retail_agent.types import ResolvedReturnItem, ResolvedSku, SaleItemInput
@@ -43,24 +43,26 @@ def resolve_return_target(
     if not lines:
         raise NotFoundError(f"Order '{order_id}' has no lines.")
 
-    exact_matches = [line for line in lines if line["sku"].lower() == sku_or_description.lower()]
-    if len(exact_matches) == 1:
-        return _to_resolved_return_item(order_id, exact_matches[0])
-    if len(exact_matches) > 1:
-        raise AmbiguityError(build_ambiguity_message(exact_matches))
+    for reference in candidate_reference_terms(sku_or_description):
+        exact_matches = [line for line in lines if line["sku"].lower() == reference.lower()]
+        if len(exact_matches) == 1:
+            return _to_resolved_return_item(order_id, exact_matches[0])
+        if len(exact_matches) > 1:
+            raise AmbiguityError(build_ambiguity_message(exact_matches))
 
-    query = sku_or_description.lower()
-    fuzzy_matches = [
-        line
-        for line in lines
-        if query in line["product_name"].lower()
-        or query in _variant_descriptor(line).lower()
-    ]
-    if not fuzzy_matches:
-        raise NotFoundError(f"No returnable item on order '{order_id}' matches '{sku_or_description}'.")
-    if len(fuzzy_matches) > 1:
-        raise AmbiguityError(build_ambiguity_message(fuzzy_matches))
-    return _to_resolved_return_item(order_id, fuzzy_matches[0])
+        query = reference.lower()
+        fuzzy_matches = [
+            line
+            for line in lines
+            if query in line["product_name"].lower()
+            or query in _variant_descriptor(line).lower()
+        ]
+        if len(fuzzy_matches) == 1:
+            return _to_resolved_return_item(order_id, fuzzy_matches[0])
+        if len(fuzzy_matches) > 1:
+            raise AmbiguityError(build_ambiguity_message(fuzzy_matches))
+
+    raise NotFoundError(f"No returnable item on order '{order_id}' matches '{sku_or_description}'.")
 
 
 def build_ambiguity_message(candidates: list[dict]) -> str:

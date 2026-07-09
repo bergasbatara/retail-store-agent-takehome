@@ -19,7 +19,7 @@ from retail_agent.db.repositories import (
     ReturnRepository,
     SupplierRepository,
 )
-from retail_agent.domain.catalog import resolve_product_reference, resolve_variant
+from retail_agent.domain.catalog import candidate_reference_terms, resolve_product_reference, resolve_variant
 from retail_agent.domain.customers import find_customer_candidates
 from retail_agent.domain.resolution import resolve_return_target
 from retail_agent.exceptions import DomainError, ValidationError
@@ -317,27 +317,29 @@ def _receive_item_input(raw: dict[str, Any], po_lines: list[dict[str, Any]]) -> 
 
 
 def _resolve_po_line_sku(reference: str, po_lines: list[dict[str, Any]]) -> str:
-    normalized_reference = reference.strip().lower()
-    exact_sku_matches = [line for line in po_lines if str(line["sku"]).lower() == normalized_reference]
-    if len(exact_sku_matches) == 1:
-        return str(exact_sku_matches[0]["sku"])
+    for candidate in candidate_reference_terms(reference):
+        normalized_reference = candidate.lower()
+        exact_sku_matches = [line for line in po_lines if str(line["sku"]).lower() == normalized_reference]
+        if len(exact_sku_matches) == 1:
+            return str(exact_sku_matches[0]["sku"])
 
-    fuzzy_matches = [
-        line
-        for line in po_lines
-        if normalized_reference in str(line.get("product_name", "")).lower()
-        or normalized_reference in _po_line_descriptor(line).lower()
-    ]
-    if not fuzzy_matches:
-        raise ValidationError(
-            f"No purchase-order line matches '{reference}'. Use find_purchase_order first to inspect the PO lines."
-        )
-    if len(fuzzy_matches) > 1:
-        options = ", ".join(_po_line_descriptor(line) for line in fuzzy_matches)
-        raise ValidationError(
-            f"Multiple purchase-order lines match '{reference}'. Which one did you want? Options: {options}."
-        )
-    return str(fuzzy_matches[0]["sku"])
+        fuzzy_matches = [
+            line
+            for line in po_lines
+            if normalized_reference in str(line.get("product_name", "")).lower()
+            or normalized_reference in _po_line_descriptor(line).lower()
+        ]
+        if len(fuzzy_matches) == 1:
+            return str(fuzzy_matches[0]["sku"])
+        if len(fuzzy_matches) > 1:
+            options = ", ".join(_po_line_descriptor(line) for line in fuzzy_matches)
+            raise ValidationError(
+                f"Multiple purchase-order lines match '{reference}'. Which one did you want? Options: {options}."
+            )
+
+    raise ValidationError(
+        f"No purchase-order line matches '{reference}'. Use find_purchase_order first to inspect the PO lines."
+    )
 
 
 def _po_line_descriptor(line: dict[str, Any]) -> str:
