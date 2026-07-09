@@ -95,3 +95,67 @@ def test_receive_purchase_order_normalizes_explicit_fake_sku_to_real_po_line(app
 
     assert receive_result["ok"] is True
     assert receive_result["result"]["purchase_order_id"] == po_id
+
+
+def test_find_order_normalizes_zero_prefixed_order_reference(app_context):
+    result = execute_tool_call("find_order", {"query": "0-1006"}, app_context)
+
+    assert result["ok"] is True
+    assert result["result"]["order"]["order"]["order_id"] == "O-1006"
+
+
+def test_find_customer_normalizes_common_customer_id_prefixes(app_context):
+    result = execute_tool_call("find_customer", {"query": "CUS-001"}, app_context)
+
+    assert result["ok"] is True
+    assert result["result"]["count"] == 1
+    assert result["result"]["customers"][0]["customer_id"] == "C-001"
+
+
+def test_receive_purchase_order_normalizes_hybrid_product_sku_reference(app_context):
+    reorder_result = execute_tool_call("reorder_low_stock", {"order_date": "2026-06-19"}, app_context)
+    po_id = reorder_result["result"]["purchase_orders"][0]["purchase_order_id"]
+
+    receive_result = execute_tool_call(
+        "receive_purchase_order",
+        {
+            "purchase_order_id": po_id,
+            "receive_date": "2026-06-19",
+            "received_items": [{"sku": "TOTE-Canvas", "quantity_received": 40}],
+        },
+        app_context,
+    )
+
+    assert receive_result["ok"] is True
+    assert receive_result["result"]["purchase_order_id"] == po_id
+
+
+def test_category_scoped_hoodie_promotion_is_coerced_to_product_and_applied(app_context):
+    promo_result = execute_tool_call(
+        "create_promotion",
+        {
+            "scope_type": "category",
+            "scope_ref": "hoodies",
+            "percent_off": 20,
+            "start_date": "2026-06-20",
+            "end_date": "2026-06-22",
+            "description": "All hoodies 20% off",
+        },
+        app_context,
+    )
+    price_result = execute_tool_call(
+        "get_product_price",
+        {
+            "query": "hoodie",
+            "color": "Gray",
+            "size": "Medium",
+            "sale_date": "2026-06-21",
+        },
+        app_context,
+    )
+
+    assert promo_result["ok"] is True
+    assert promo_result["result"]["scope_type"] == "product"
+    assert promo_result["result"]["scope_ref"] == "P-HOOD"
+    assert price_result["ok"] is True
+    assert price_result["result"]["effective_unit_price"] == "48.00"

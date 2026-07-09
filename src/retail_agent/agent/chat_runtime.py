@@ -154,6 +154,7 @@ def run_tool_loop(
     successful_state_change_results: list[dict[str, Any]] = []
     successful_deterministic_result: dict[str, Any] | None = None
     last_tool_error_result: dict[str, Any] | None = None
+    failed_state_change_result: dict[str, Any] | None = None
 
     while True:
         tool_calls = _extract_tool_calls(response)
@@ -175,6 +176,8 @@ def run_tool_loop(
                     policy_retry_count += 1
                     continue
                 return _policy_failure_message(original_user_text)
+            if failed_state_change_result is not None:
+                return _render_tool_error(failed_state_change_result)
             if successful_state_change_results:
                 return render_state_change_result(successful_state_change_results[-1])
             if successful_deterministic_result is not None:
@@ -204,6 +207,8 @@ def run_tool_loop(
                 successful_deterministic_result = tool_result
             if not tool_result.get("ok"):
                 last_tool_error_result = tool_result
+                if tool_result.get("tool") in STATE_CHANGING_TOOLS:
+                    failed_state_change_result = tool_result
             session_memory["tool_results"] = (
                 session_memory.get("tool_results", []) + [tool_result]
             )[-10:]

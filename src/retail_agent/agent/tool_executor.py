@@ -20,7 +20,7 @@ from retail_agent.db.repositories import (
     SupplierRepository,
 )
 from retail_agent.domain.catalog import candidate_reference_terms, resolve_product_reference, resolve_variant
-from retail_agent.domain.customers import find_customer_candidates
+from retail_agent.domain.customers import candidate_customer_references, find_customer_candidates
 from retail_agent.domain.resolution import resolve_return_target
 from retail_agent.exceptions import DomainError, ValidationError
 from retail_agent.money import to_decimal
@@ -133,18 +133,19 @@ def handle_receive_purchase_order(arguments: dict, app_context: AppContext) -> d
 
 def handle_process_return(arguments: dict, app_context: AppContext) -> dict:
     repos = _return_repositories(app_context)
-    order_bundle = repos.orders.get_order_with_lines(arguments["order_id"])
+    order_id = _normalize_order_reference(arguments["order_id"])
+    order_bundle = repos.orders.get_order_with_lines(order_id)
     if order_bundle is None:
         raise ValidationError(
             f"Order '{arguments['order_id']}' was not found. Use find_order first if you need to resolve the order ID."
         )
     resolved_item = resolve_return_target(
-        arguments["order_id"],
+        order_id,
         arguments["sku_or_ref"],
         repos.orders,
     )
     result = process_return(
-        order_id=arguments["order_id"],
+        order_id=order_id,
         sku_or_ref=resolved_item.sku,
         quantity=int(arguments["quantity"]),
         condition=arguments["condition"],
@@ -156,9 +157,9 @@ def handle_process_return(arguments: dict, app_context: AppContext) -> dict:
 
 def handle_create_promotion(arguments: dict, app_context: AppContext) -> dict:
     repos = _promotion_repositories(app_context)
-    scope_ref = _resolve_promotion_scope_ref(arguments, repos.catalog)
+    scope_type, scope_ref = _resolve_promotion_scope(arguments, repos.catalog)
     result = create_promotion(
-        scope_type=arguments["scope_type"],
+        scope_type=scope_type,
         scope_ref=scope_ref,
         percent_off=to_decimal(arguments["percent_off"]),
         start_date=parse_date(arguments["start_date"]),
@@ -202,7 +203,12 @@ def handle_stockout_risk_report(arguments: dict, app_context: AppContext) -> dic
 
 def handle_find_customer(arguments: dict, app_context: AppContext) -> dict:
     repo = CustomerRepository(app_context.conn)
-    customers = find_customer_candidates(arguments["query"], repo)
+    query = str(arguments["query"]).strip()
+    for reference in candidate_customer_references(query):
+        exact = repo.get_customer(reference)
+        if exact is not None:
+            return {"customers": [_to_payload(_row_to_customer_payload(exact))], "count": 1}
+    customers = find_customer_candidates(query, repo)
     return {"customers": [_to_payload(customer) for customer in customers], "count": len(customers)}
 
 
@@ -220,10 +226,11 @@ def handle_find_product(arguments: dict, app_context: AppContext) -> dict:
 def handle_find_order(arguments: dict, app_context: AppContext) -> dict:
     repo = OrderRepository(app_context.conn)
     query = str(arguments["query"]).strip()
-    exact_bundle = repo.get_order_with_lines(query)
+    normalized_query = _normalize_order_reference(query)
+    exact_bundle = repo.get_order_with_lines(normalized_query)
     if exact_bundle is not None:
         return {"order": _to_payload(exact_bundle)}
-    orders = repo.find_orders(query)
+    orders = repo.find_orders(normalized_query if normalized_query != query else query)
     return {"orders": [_to_payload(order) for order in orders], "count": len(orders)}
 
 
@@ -352,15 +359,21 @@ def _po_line_descriptor(line: dict[str, Any]) -> str:
     return " ".join(part for part in parts if part)
 
 
-def _resolve_promotion_scope_ref(arguments: dict[str, Any], catalog_repo: CatalogRepository) -> str:
+def _resolve_promotion_scope(arguments: dict[str, Any], catalog_repo: CatalogRepository) -> tuple[str, str]:
     scope_type = str(arguments["scope_type"])
     scope_ref = str(arguments["scope_ref"]).strip()
-    if scope_type != "product":
-        return scope_ref
-    if scope_ref.startswith("P-"):
-        return scope_ref
-    resolution = resolve_product_reference(scope_ref, catalog_repo)
-    return resolution.product_id
+    if scope_type == "product":
+        if scope_ref.startswith("P-"):
+            return scope_type, scope_ref
+        resolution = resolve_product_reference(scope_ref, catalog_repo)
+        return "product", resolution.product_id
+    if scope_type == "category" and scope_ref not in catalog_repo.list_categories():
+        try:
+            resolution = resolve_product_reference(scope_ref, catalog_repo)
+        except DomainError:
+            return scope_type, scope_ref
+        return "product", resolution.product_id
+    return scope_type, scope_ref
 
 
 def _resolve_price_lookup_sku(arguments: dict[str, Any], catalog_repo: CatalogRepository) -> str:
@@ -375,6 +388,25 @@ def _resolve_price_lookup_sku(arguments: dict[str, Any], catalog_repo: CatalogRe
         )
     resolved = resolve_variant(query, arguments.get("color"), arguments.get("size"), catalog_repo)
     return resolved.sku
+
+
+def _normalize_order_reference(value: Any) -> str:
+    text = _optional_non_empty_str(value) or ""
+    if not text:
+        return text
+    normalized = text.upper().replace("’", "'").replace("“", "").replace("”", "")
+    if normalized.startswith("0-"):
+        return "O-" + normalized[2:]
+    return normalized
+
+
+def _row_to_customer_payload(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "customer_id": row["customer_id"],
+        "name": row["name"],
+        "email": row["email"],
+        "joined_date": row["joined_date"],
+    }
 
 
 def _optional_non_empty_str(value: Any) -> str | None:

@@ -12,6 +12,9 @@ from retail_agent.types import ProductResolution, ResolvedSku
 PRODUCT_NAME_ALIASES = {
     "canvas totes": "Canvas Tote",
     "canvas tote": "Canvas Tote",
+    "tote": "Canvas Tote",
+    "totes": "Canvas Tote",
+    "tote canvas": "Canvas Tote",
     "classic tees": "Classic Tee",
     "classic tee": "Classic Tee",
     "standard tee": "Classic Tee",
@@ -59,10 +62,16 @@ def candidate_reference_terms(raw_value: str) -> tuple[str, ...]:
     sku_words = _sku_like_words_to_phrase(stripped)
     if sku_words and sku_words != stripped:
         _append_reference_variants(candidates, sku_words)
+        reversed_words = _reverse_two_word_phrase(sku_words)
+        if reversed_words is not None:
+            _append_reference_variants(candidates, reversed_words)
 
     deindexed_words = _sku_like_words_to_phrase(deindexed)
     if deindexed_words and deindexed_words not in {stripped, deindexed}:
         _append_reference_variants(candidates, deindexed_words)
+        reversed_words = _reverse_two_word_phrase(deindexed_words)
+        if reversed_words is not None:
+            _append_reference_variants(candidates, reversed_words)
 
     return tuple(candidates)
 
@@ -249,6 +258,13 @@ def _sku_like_words_to_phrase(value: str) -> str | None:
     if not words:
         return None
     return " ".join(words)
+
+
+def _reverse_two_word_phrase(value: str) -> str | None:
+    parts = value.split()
+    if len(parts) != 2:
+        return None
+    return f"{parts[1]} {parts[0]}"
 
 
 def _append_unique(values: list[str], candidate: str) -> None:

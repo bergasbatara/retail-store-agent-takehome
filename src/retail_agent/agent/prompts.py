@@ -12,6 +12,7 @@ def system_prompt(current_date: str) -> str:
         "For any sale, return, reorder, receiving, or promotion-creation request, you must call a tool before answering.\n"
         "Before process_return, receive_purchase_order, or get_product_price, resolve any uncertain order, purchase-order, product, or SKU reference with lookup tools first.\n"
         "Use find_order to resolve orders, find_purchase_order to resolve purchase orders, find_product to resolve products and SKUs, and find_customer to resolve customers.\n"
+        "If a lookup result uniquely identifies the requested customer, order, purchase order, product, SKU, or order line, do not ask for confirmation. Proceed with the execution tool.\n"
         "If the request is actionable, act. Do not delay with phrases like 'let me confirm' or 'one moment' unless there is true ambiguity or missing required information.\n"
         "Only ask follow-up questions for real ambiguity, such as unresolved product variant, unresolved customer match, or other missing required identifiers.\n"
         "When clarification is required, ask only for the missing discriminator: color, size, customer identity, purchase-order ID, or other single missing identifier.\n"
