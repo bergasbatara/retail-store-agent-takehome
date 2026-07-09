@@ -41,6 +41,21 @@ CLARIFICATION_PATTERNS = (
     r"\bwhat color\b",
     r"\bwhat size\b",
 )
+FAKE_OPERATIONAL_PAYLOAD_PATTERNS = (
+    r"\bsale\s+[a-z]-\d+\b",
+    r"\breturn\s+[a-z]-\d+\b",
+    r"\bpurchase order\s+[a-z]+-\d+\b",
+    r"\border id\s*:\s*[a-z]-\d+\b",
+    r"\bsubtotal\s*:",
+    r"\btotal\s*:",
+    r"\bdiscount\s*:",
+    r"\bpayment\s*:",
+    r"\bcustomer\s*:",
+    r"\bitems\s*:",
+    r"\brefund processed\b",
+    r"\binventory updated\b",
+    r"\breorder complete\b",
+)
 ERROR_PATTERNS = (
     r"\bambiguous\b",
     r"\bnot found\b",
@@ -87,6 +102,8 @@ def is_true_clarification_or_error(final_text: str) -> bool:
     normalized = final_text.strip().lower()
     if not normalized:
         return False
+    if contains_fake_operational_payload(final_text):
+        return False
     if any(re.search(pattern, normalized) for pattern in CLARIFICATION_PATTERNS):
         return True
     if any(re.search(pattern, normalized) for pattern in ERROR_PATTERNS):
@@ -97,3 +114,11 @@ def is_true_clarification_or_error(final_text: str) -> bool:
 def contains_pseudo_tool_markup(final_text: str) -> bool:
     """Return True when the model emitted tool-like markers as plain text."""
     return any(pattern.search(final_text) for pattern in PSEUDO_TOOL_PATTERNS)
+
+
+def contains_fake_operational_payload(final_text: str) -> bool:
+    """Return True when a plain-text reply embeds fake receipt/order/report structure."""
+    normalized = final_text.strip().lower()
+    if not normalized:
+        return False
+    return any(re.search(pattern, normalized) for pattern in FAKE_OPERATIONAL_PAYLOAD_PATTERNS)
