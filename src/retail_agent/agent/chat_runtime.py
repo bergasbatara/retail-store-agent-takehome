@@ -21,7 +21,9 @@ from retail_agent.cli import AppContext
 from retail_agent.db.repositories import SessionRepository
 from retail_agent.presenters.messages import render_clarification
 from retail_agent.presenters.tool_results import (
+    DETERMINISTIC_RESULT_TOOLS,
     STATE_CHANGING_TOOLS,
+    render_tool_result,
     render_state_change_result,
 )
 from retail_agent.session.memory import (
@@ -150,6 +152,7 @@ def run_tool_loop(
     policy_retry_count = 0
     used_tool_this_turn = False
     successful_state_change_results: list[dict[str, Any]] = []
+    successful_deterministic_result: dict[str, Any] | None = None
     last_tool_error_result: dict[str, Any] | None = None
 
     while True:
@@ -174,6 +177,8 @@ def run_tool_loop(
                 return _policy_failure_message(original_user_text)
             if successful_state_change_results:
                 return render_state_change_result(successful_state_change_results[-1])
+            if successful_deterministic_result is not None:
+                return render_tool_result(successful_deterministic_result)
             if last_tool_error_result is not None:
                 return _render_tool_error(last_tool_error_result)
             if require_tool_choice and is_true_clarification_or_error(final_text):
@@ -195,6 +200,8 @@ def run_tool_loop(
             used_tool_this_turn = True
             if tool_result.get("ok") and tool_result.get("tool") in STATE_CHANGING_TOOLS:
                 successful_state_change_results.append(tool_result)
+            if tool_result.get("ok") and tool_result.get("tool") in DETERMINISTIC_RESULT_TOOLS:
+                successful_deterministic_result = tool_result
             if not tool_result.get("ok"):
                 last_tool_error_result = tool_result
             session_memory["tool_results"] = (

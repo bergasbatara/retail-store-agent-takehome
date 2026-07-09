@@ -15,9 +15,19 @@ STATE_CHANGING_TOOLS = {
     "create_promotion",
 }
 
+DETERMINISTIC_RESULT_TOOLS = STATE_CHANGING_TOOLS | {
+    "top_products_by_margin",
+    "stockout_risk_report",
+}
+
 
 def render_state_change_result(tool_result: dict[str, Any]) -> str:
     """Render a successful state-changing tool result from its payload."""
+    return render_tool_result(tool_result)
+
+
+def render_tool_result(tool_result: dict[str, Any]) -> str:
+    """Render a successful tool result from its payload when deterministic output is preferred."""
     tool_name = str(tool_result.get("tool", ""))
     payload = tool_result.get("result", {})
     if not isinstance(payload, dict):
@@ -33,6 +43,10 @@ def render_state_change_result(tool_result: dict[str, Any]) -> str:
         return _render_reorder_payload(payload)
     if tool_name == "create_promotion":
         return _render_promotion_payload(payload)
+    if tool_name == "top_products_by_margin":
+        return _render_margin_payload(payload)
+    if tool_name == "stockout_risk_report":
+        return _render_stockout_payload(payload)
     return render_success_summary(payload)
 
 
@@ -123,6 +137,44 @@ def _render_promotion_payload(payload: dict[str, Any]) -> str:
     )
 
 
+def _render_margin_payload(payload: dict[str, Any]) -> str:
+    rows = payload.get("rows") or []
+    if not rows:
+        return "**Top Products By Profit Margin**\n\nNo margin rows found."
+
+    lines = ["**Top Products By Profit Margin**", ""]
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            continue
+        margin_pct = _format_margin_percent(row.get("margin"), row.get("revenue"))
+        lines.append(
+            f"{index}. {row.get('product_name')} ({row.get('product_id')}): "
+            f"{_format_money(row.get('margin'))} margin on {_format_money(row.get('revenue'))} revenue"
+            + (f" [{margin_pct}]" if margin_pct is not None else "")
+        )
+    return "\n".join(lines)
+
+
+def _render_stockout_payload(payload: dict[str, Any]) -> str:
+    rows = payload.get("rows") or []
+    if not rows:
+        return "**Stockout Risk Report**\n\nNo stockout risks found."
+
+    lines = ["**Stockout Risk Report**", ""]
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        lines.append(
+            f"- {row.get('product_name')} ({row.get('product_id')}): "
+            f"on hand {row.get('on_hand_qty')}, reorder point {row.get('reorder_point')}, "
+            f"monthly units {row.get('monthly_units')}, days of cover {_format_days_cover(row.get('days_of_cover'))}"
+        )
+        reason = row.get("reason")
+        if reason:
+            lines.append(f"  Reason: {reason}")
+    return "\n".join(lines)
+
+
 def _format_money(value: Any) -> str:
     try:
         return f"${float(value):.2f}"
@@ -142,3 +194,21 @@ def _variant_text(color: Any, size: Any) -> str:
     if not bits:
         return ""
     return f" ({', '.join(bits)})"
+
+
+def _format_days_cover(value: Any) -> str:
+    try:
+        return f"{float(value):.1f}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _format_margin_percent(margin: Any, revenue: Any) -> str | None:
+    try:
+        revenue_value = float(revenue)
+        if revenue_value == 0:
+            return None
+        margin_value = float(margin)
+        return f"{(margin_value / revenue_value) * 100:.0f}% margin"
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
