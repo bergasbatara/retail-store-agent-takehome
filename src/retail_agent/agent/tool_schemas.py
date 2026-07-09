@@ -16,6 +16,8 @@ def build_tool_definitions() -> list[dict]:
         _stockout_risk_report_schema(),
         _find_customer_schema(),
         _find_product_schema(),
+        _find_order_schema(),
+        _find_purchase_order_schema(),
     ]
 
 
@@ -78,7 +80,7 @@ def _receive_purchase_order_schema() -> dict:
         "type": "function",
         "function": {
             "name": "receive_purchase_order",
-            "description": "Receive some or all quantities on an open purchase order.",
+            "description": "Receive some or all quantities on an open purchase order. Use find_purchase_order first unless you already have the exact purchase_order_id and PO line SKU from a tool result.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -89,10 +91,11 @@ def _receive_purchase_order_schema() -> dict:
                         "items": {
                             "type": "object",
                             "properties": {
-                                "sku": {"type": "string"},
+                                "sku": {"type": ["string", "null"]},
+                                "product_name": {"type": ["string", "null"]},
                                 "quantity_received": {"type": "integer", "minimum": 1},
                             },
-                            "required": ["sku", "quantity_received"],
+                            "required": ["quantity_received"],
                             "additionalProperties": False,
                         },
                         "minItems": 1,
@@ -110,7 +113,7 @@ def _process_return_schema() -> dict:
         "type": "function",
         "function": {
             "name": "process_return",
-            "description": "Process a return against an existing order.",
+            "description": "Process a return against an existing order. Use find_order first unless you already have the exact order_id and sold item reference from a tool result.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -132,7 +135,7 @@ def _create_promotion_schema() -> dict:
         "type": "function",
         "function": {
             "name": "create_promotion",
-            "description": "Create a percent-off promotion for a product or category.",
+            "description": "Create a percent-off promotion for a product or category. If targeting a product and you do not already have its exact product_id from a lookup, use find_product first.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -155,14 +158,17 @@ def _get_product_price_schema() -> dict:
         "type": "function",
         "function": {
             "name": "get_product_price",
-            "description": "Get the effective sale price for a concrete SKU on a given date.",
+            "description": "Get the effective sale price for a concrete SKU on a given date. Use find_product first unless you already have the exact SKU from a tool result.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "sku": {"type": "string"},
+                    "sku": {"type": ["string", "null"]},
+                    "query": {"type": ["string", "null"]},
+                    "color": {"type": ["string", "null"]},
+                    "size": {"type": ["string", "null"]},
                     "sale_date": {"type": "string", "description": "YYYY-MM-DD"},
                 },
-                "required": ["sku", "sale_date"],
+                "required": ["sale_date"],
                 "additionalProperties": False,
             },
         },
@@ -237,6 +243,42 @@ def _find_product_schema() -> dict:
                     "query": {"type": "string"},
                     "color": {"type": ["string", "null"]},
                     "size": {"type": ["string", "null"]},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _find_order_schema() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "find_order",
+            "description": "Find an order by order ID, customer name, sold SKU, or sold product name.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _find_purchase_order_schema() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "find_purchase_order",
+            "description": "Find a purchase order by purchase-order ID, supplier name, SKU, product name, or status.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
                 },
                 "required": ["query"],
                 "additionalProperties": False,

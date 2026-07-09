@@ -70,6 +70,13 @@ def update_memory_from_tool_result(memory: SessionMemory, result: dict) -> Sessi
         updates["last_sku"] = _extract_direct_product_sku(payload) or memory.last_sku
     elif tool_name == "find_customer":
         updates["last_customer_id"] = _extract_customer_id(payload) or memory.last_customer_id
+    elif tool_name == "find_order":
+        updates["last_order_id"] = _extract_order_id(payload) or memory.last_order_id
+        updates["last_returnable_order_id"] = _extract_order_id(payload) or memory.last_returnable_order_id
+        updates["last_sku"] = _extract_order_sku(payload) or memory.last_sku
+    elif tool_name == "find_purchase_order":
+        updates["last_purchase_order_id"] = _extract_purchase_order_id(payload) or memory.last_purchase_order_id
+        updates["last_sku"] = _extract_purchase_order_sku(payload) or memory.last_sku
     elif tool_name == "get_product_price":
         updates["last_sku"] = payload.get("sku") or memory.last_sku
     elif tool_name == "create_promotion":
@@ -146,6 +153,16 @@ def _extract_first_line_sku(payload: dict[str, Any]) -> str | None:
 
 
 def _extract_purchase_order_id(payload: dict[str, Any]) -> str | None:
+    purchase_order = payload.get("purchase_order")
+    if isinstance(purchase_order, dict):
+        nested_purchase_order = purchase_order.get("purchase_order")
+        if isinstance(nested_purchase_order, dict):
+            direct_id = _optional_str(nested_purchase_order.get("purchase_order_id"))
+            if direct_id:
+                return direct_id
+        direct_id = _optional_str(purchase_order.get("purchase_order_id"))
+        if direct_id:
+            return direct_id
     if payload.get("purchase_order_id"):
         return _optional_str(payload.get("purchase_order_id"))
     orders = payload.get("purchase_orders") or []
@@ -157,6 +174,13 @@ def _extract_purchase_order_id(payload: dict[str, Any]) -> str | None:
 
 
 def _extract_purchase_order_sku(payload: dict[str, Any]) -> str | None:
+    purchase_order = payload.get("purchase_order")
+    if isinstance(purchase_order, dict):
+        lines = purchase_order.get("lines") or []
+        if lines and isinstance(lines[0], dict):
+            direct_sku = _optional_str(lines[0].get("sku"))
+            if direct_sku:
+                return direct_sku
     orders = payload.get("purchase_orders") or []
     if orders:
         first = orders[0]
@@ -198,6 +222,32 @@ def _extract_customer_id(payload: dict[str, Any]) -> str | None:
     customers = payload.get("customers") or []
     if len(customers) == 1 and isinstance(customers[0], dict):
         return _optional_str(customers[0].get("customer_id"))
+    return None
+
+
+def _extract_order_id(payload: dict[str, Any]) -> str | None:
+    order = payload.get("order")
+    if isinstance(order, dict):
+        nested_order = order.get("order")
+        if isinstance(nested_order, dict):
+            direct_id = _optional_str(nested_order.get("order_id"))
+            if direct_id:
+                return direct_id
+        direct_id = _optional_str(order.get("order_id"))
+        if direct_id:
+            return direct_id
+    orders = payload.get("orders") or []
+    if len(orders) == 1 and isinstance(orders[0], dict):
+        return _optional_str(orders[0].get("order_id"))
+    return None
+
+
+def _extract_order_sku(payload: dict[str, Any]) -> str | None:
+    order = payload.get("order")
+    if isinstance(order, dict):
+        lines = order.get("lines") or []
+        if lines and isinstance(lines[0], dict):
+            return _optional_str(lines[0].get("sku"))
     return None
 
 

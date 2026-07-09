@@ -254,6 +254,32 @@ class OrderRepository:
             "lines": _rows_to_dicts(line_rows),
         }
 
+    def find_orders(self, query: str) -> list[dict[str, Any]]:
+        like_query = f"%{query}%"
+        rows = self.conn.execute(
+            """
+            SELECT DISTINCT
+                o.order_id,
+                o.order_date,
+                o.customer_id,
+                o.payment_method,
+                c.name AS customer_name
+            FROM orders o
+            LEFT JOIN customers c ON c.customer_id = o.customer_id
+            LEFT JOIN order_lines ol ON ol.order_id = o.order_id
+            LEFT JOIN products p ON p.sku = ol.sku
+            WHERE
+                o.order_id = ?
+                OR o.order_id LIKE ?
+                OR lower(coalesce(c.name, '')) LIKE lower(?)
+                OR lower(coalesce(p.product_name, '')) LIKE lower(?)
+                OR lower(coalesce(ol.sku, '')) LIKE lower(?)
+            ORDER BY o.order_date DESC, o.order_id DESC
+            """,
+            (query, like_query, like_query, like_query, like_query),
+        ).fetchall()
+        return _rows_to_dicts(rows)
+
     def list_units_sold_by_product(
         self,
         period_start: date,
@@ -494,6 +520,33 @@ class PurchaseOrderRepository:
             "purchase_order": dict(po_row),
             "lines": _rows_to_dicts(line_rows),
         }
+
+    def find_purchase_orders(self, query: str) -> list[dict[str, Any]]:
+        like_query = f"%{query}%"
+        rows = self.conn.execute(
+            """
+            SELECT DISTINCT
+                po.purchase_order_id,
+                po.supplier_id,
+                s.supplier_name,
+                po.order_date,
+                po.status
+            FROM purchase_orders po
+            JOIN suppliers s ON s.supplier_id = po.supplier_id
+            LEFT JOIN purchase_order_lines pol ON pol.purchase_order_id = po.purchase_order_id
+            LEFT JOIN products p ON p.sku = pol.sku
+            WHERE
+                po.purchase_order_id = ?
+                OR po.purchase_order_id LIKE ?
+                OR lower(s.supplier_name) LIKE lower(?)
+                OR lower(coalesce(p.product_name, '')) LIKE lower(?)
+                OR lower(coalesce(pol.sku, '')) LIKE lower(?)
+                OR lower(po.status) LIKE lower(?)
+            ORDER BY po.order_date DESC, po.purchase_order_id DESC
+            """,
+            (query, like_query, like_query, like_query, like_query, like_query),
+        ).fetchall()
+        return _rows_to_dicts(rows)
 
     def get_open_purchase_order(self, po_id: str) -> dict[str, Any] | None:
         po_bundle = self.get_purchase_order(po_id)
