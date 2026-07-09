@@ -6,6 +6,7 @@ from retail_agent.domain.catalog import candidate_reference_terms, resolve_produ
 from retail_agent.domain.customers import resolve_customer
 from retail_agent.domain.resolution import resolve_return_target
 from retail_agent.exceptions import AmbiguityError
+from retail_agent.session.memory import SessionMemory, resolve_variant_follow_up
 
 
 def test_ambiguous_hoodie_request_prompts_for_color_when_required(catalog_repo):
@@ -55,3 +56,25 @@ def test_candidate_reference_terms_include_deindexed_and_aliased_forms():
     assert "HOODIE-002" in terms
     assert "HOODIE" in terms
     assert "Pullover Hoodie" in terms
+
+
+def test_variant_only_follow_up_resolves_against_last_product_candidates(catalog_repo):
+    memory = SessionMemory(last_product_candidates=("HOOD-GRY-M", "HOOD-NVY-M"))
+
+    resolution = resolve_variant_follow_up("Gray", memory, catalog_repo)
+
+    assert resolution is not None
+    assert resolution.matched_skus == ("HOOD-GRY-M",)
+    assert resolution.updated_memory.last_product_candidates == ("HOOD-GRY-M",)
+    assert resolution.updated_memory.last_sku == "HOOD-GRY-M"
+
+
+def test_variant_only_size_follow_up_narrows_candidate_list(catalog_repo):
+    memory = SessionMemory(last_product_candidates=("HOOD-GRY-M", "HOOD-GRY-L"))
+
+    resolution = resolve_variant_follow_up("Large", memory, catalog_repo)
+
+    assert resolution is not None
+    assert resolution.matched_skus == ("HOOD-GRY-L",)
+    assert resolution.updated_memory.last_product_candidates == ("HOOD-GRY-L",)
+    assert resolution.updated_memory.last_sku == "HOOD-GRY-L"

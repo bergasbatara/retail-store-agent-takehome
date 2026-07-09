@@ -132,6 +132,16 @@ def resolve_variant(
     return _row_to_resolved_sku(candidates[0], quantity=1)
 
 
+def normalize_color(value: str | None) -> str | None:
+    """Normalize a user color reference to catalog form."""
+    return _normalize_color(value)
+
+
+def normalize_size(value: str | None) -> str | None:
+    """Normalize a user size reference to catalog form."""
+    return _normalize_size(value)
+
+
 def _row_to_resolved_sku(row: dict, *, quantity: int) -> ResolvedSku:
     return ResolvedSku(
         sku=row["sku"],

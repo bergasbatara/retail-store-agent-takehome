@@ -9,7 +9,7 @@ from typing import Any
 from retail_agent.agent.openai_client import build_openai_client
 from retail_agent.agent.model_protocol import NormalizedAssistantTurn, NormalizedToolCall
 from retail_agent.agent.policy import (
-    is_state_changing_request,
+    is_record_dependent_request,
     is_true_clarification_or_error,
     response_satisfies_policy,
 )
@@ -19,7 +19,7 @@ from retail_agent.agent.providers.openai_compat import OpenAICompatProvider
 from retail_agent.agent.tool_executor import execute_tool_call
 from retail_agent.agent.tool_schemas import build_tool_definitions
 from retail_agent.cli import AppContext
-from retail_agent.db.repositories import SessionRepository
+from retail_agent.db.repositories import CatalogRepository, SessionRepository
 from retail_agent.presenters.messages import render_clarification
 from retail_agent.presenters.tool_results import (
     DETERMINISTIC_RESULT_TOOLS,
@@ -31,6 +31,7 @@ from retail_agent.session.memory import (
     SessionMemory,
     inject_memory_hints,
     load_session_memory,
+    resolve_variant_follow_up,
     save_session_memory,
     update_memory_from_tool_result,
 )
@@ -52,11 +53,28 @@ def run_agent_turn(user_text: str, session_id: str, app_context: AppContext) -> 
         structured_memory = load_session_memory(session_id, repo)
         session_memory["memory"] = structured_memory
 
-    messages = build_messages(session_memory, user_text, structured_memory)
+    follow_up_resolution = resolve_variant_follow_up(
+        user_text,
+        structured_memory,
+        CatalogRepository(app_context.conn),
+    )
+    extra_system_messages: list[str] = []
+    if follow_up_resolution is not None:
+        structured_memory = follow_up_resolution.updated_memory
+        session_memory["memory"] = structured_memory
+        save_session_memory(session_id, structured_memory, repo)
+        extra_system_messages.append(follow_up_resolution.prompt_hint)
+
+    messages = build_messages(
+        session_memory,
+        user_text,
+        structured_memory,
+        extra_system_messages=extra_system_messages,
+    )
     tools = build_tool_definitions()
     client = build_openai_client(app_context.settings)
     provider = OpenAICompatProvider(client, app_context.settings.model_name)
-    require_tool_choice = is_state_changing_request(user_text)
+    require_tool_choice = is_record_dependent_request(user_text)
     initial_response = submit_with_tools(
         messages=messages,
         tools=tools,
@@ -89,13 +107,21 @@ def build_messages(
     session_memory: dict,
     user_text: str,
     structured_memory: SessionMemory,
+    *,
+    extra_system_messages: list[str] | None = None,
 ) -> list[dict]:
     """Build the message list sent to the model."""
     history = session_memory.get("messages", [])
     current_date = date.today().isoformat()
+    extra_hints = [
+        {"role": "system", "content": message}
+        for message in (extra_system_messages or [])
+        if message.strip()
+    ]
     return [
         {"role": "system", "content": system_prompt(current_date)},
         {"role": "system", "content": inject_memory_hints(structured_memory)},
+        *extra_hints,
         *history,
         {"role": "user", "content": user_text},
     ]
@@ -248,9 +274,9 @@ def _assistant_message_from_response(response: NormalizedAssistantTurn) -> dict[
 
 
 def _policy_failure_message(user_text: str) -> str:
-    if is_state_changing_request(user_text):
+    if is_record_dependent_request(user_text):
         return (
-            "The model did not use the required tool for this state-changing request. "
+            "The model did not use the required tool for this request. "
             "Retry with a tool-calling-capable response policy."
         )
     return "The model response did not satisfy runtime policy."
@@ -262,7 +288,8 @@ def build_tool_retry_message(user_text: str) -> dict[str, str]:
         "role": "system",
         "content": (
             "The previous response violated runtime policy. "
-            "This request is a state-changing action. Your very next response must be a tool call if the request is actionable. "
+            "This request requires tool use because it changes state or depends on store records. "
+            "Your very next response must be a tool call if the request is actionable. "
             "Do not ask for confirmation, do not invent dates or IDs, and do not answer with plain text only. "
             "If you need clarification, use lookup tools first when possible and ask only for the missing discriminator. "
             f"Original user request: {user_text}"

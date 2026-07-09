@@ -17,6 +17,27 @@ STATE_CHANGE_PATTERNS = (
     r"\bcreate promotion\b",
     r"\bput\b.*\bon\b.*\boff\b",
 )
+RECORD_LOOKUP_PATTERNS = (
+    r"\btop\b.*\bproducts?\b.*\bmargin\b",
+    r"\bprofit margin\b",
+    r"\bmargin report\b",
+    r"\bstockout\b",
+    r"\bstock out\b",
+    r"\babout to stock out\b",
+    r"\breorder point\b",
+    r"\bdays of cover\b",
+    r"\bprice\b",
+    r"\bhow much\b",
+    r"\bwhat(?:'s| is)? the price\b",
+    r"\bfind customer\b",
+    r"\bfind order\b",
+    r"\bfind product\b",
+    r"\bfind purchase order\b",
+    r"\blook up\b.*\bcustomer\b",
+    r"\blook up\b.*\border\b",
+    r"\blook up\b.*\bproduct\b",
+    r"\blook up\b.*\bpurchase order\b",
+)
 
 BAD_PLAINTEXT_PATTERNS = (
     r"\bi(?:\s*'ll|\s+will)\s+process\b",
@@ -78,13 +99,21 @@ def is_state_changing_request(user_text: str) -> bool:
     return any(re.search(pattern, normalized) for pattern in STATE_CHANGE_PATTERNS)
 
 
+def is_record_dependent_request(user_text: str) -> bool:
+    """Return True when the user appears to request store-record-backed data."""
+    normalized = user_text.lower()
+    if is_state_changing_request(normalized):
+        return True
+    return any(re.search(pattern, normalized) for pattern in RECORD_LOOKUP_PATTERNS)
+
+
 def response_satisfies_policy(
     user_text: str,
     tool_calls: list[dict],
     final_text: str,
 ) -> bool:
-    """Return False for state-changing requests answered without required tool use."""
-    if not is_state_changing_request(user_text):
+    """Return False for tool-required requests answered without required tool use."""
+    if not is_record_dependent_request(user_text):
         return True
     if tool_calls:
         return True

@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 from retail_agent.agent.chat_runtime import run_agent_turn
+from retail_agent.session.memory import SessionMemory
 
 
 class FakeCompletions:
@@ -132,7 +133,7 @@ def test_state_changing_plaintext_response_is_reprompted(app_context, monkeypatc
     retry_messages = fake_client.chat.completions.calls[1]["messages"]
     assert any(
         message.get("role") == "system"
-        and "must use the appropriate tool now" in message.get("content", "")
+        and "requires tool use" in message.get("content", "")
         for message in retry_messages
         if isinstance(message, dict)
     )
@@ -222,3 +223,51 @@ def test_xml_style_tool_markup_can_be_safely_normalized_when_schema_matches(app_
     text = run_agent_turn("Find Sarah Chen.", "cli", app_context)
 
     assert text == "Found Sarah Chen via normalized provider call."
+
+
+class VariantFollowUpCompletions:
+    def __init__(self):
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="Clarified against prior candidates.",
+                        tool_calls=[],
+                    )
+                )
+            ],
+        )
+
+
+class VariantFollowUpClient:
+    def __init__(self):
+        self.chat = SimpleNamespace(completions=VariantFollowUpCompletions())
+
+
+def test_variant_only_follow_up_injects_candidate_bound_hint(app_context, monkeypatch):
+    fake_client = VariantFollowUpClient()
+    monkeypatch.setattr(
+        "retail_agent.agent.chat_runtime.build_openai_client",
+        lambda settings: fake_client,
+    )
+    app_context.session_state["cli"] = {
+        "messages": [],
+        "tool_results": [],
+        "memory": SessionMemory(last_product_candidates=("HOOD-GRY-M", "HOOD-NVY-M")),
+    }
+
+    text = run_agent_turn("Gray", "cli", app_context)
+
+    assert text == "Clarified against prior candidates."
+    messages = fake_client.chat.completions.calls[0]["messages"]
+    assert any(
+        message.get("role") == "system"
+        and "recent candidate SKUs" in message.get("content", "")
+        and "HOOD-GRY-M" in message.get("content", "")
+        for message in messages
+        if isinstance(message, dict)
+    )

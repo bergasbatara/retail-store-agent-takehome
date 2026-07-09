@@ -3,9 +3,31 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import re
 from typing import Any
 
-from retail_agent.db.repositories import SessionRepository
+from retail_agent.db.repositories import CatalogRepository, SessionRepository
+from retail_agent.domain.catalog import normalize_color, normalize_size
+
+
+FOLLOW_UP_FILLER_WORDS = {
+    "a",
+    "an",
+    "and",
+    "color",
+    "for",
+    "is",
+    "it",
+    "its",
+    "make",
+    "one",
+    "please",
+    "size",
+    "the",
+    "to",
+    "use",
+    "with",
+}
 
 
 @dataclass(frozen=True)
@@ -18,6 +40,17 @@ class SessionMemory:
     last_purchase_order_id: str | None = None
     last_product_candidates: tuple[str, ...] = ()
     last_sku: str | None = None
+
+
+@dataclass(frozen=True)
+class VariantFollowUpResolution:
+    """Resolved follow-up constraint for a prior product ambiguity."""
+
+    normalized_color: str | None
+    normalized_size: str | None
+    matched_skus: tuple[str, ...]
+    prompt_hint: str
+    updated_memory: SessionMemory
 
 
 def load_session_memory(session_id: str, repo: SessionRepository) -> SessionMemory:
@@ -121,6 +154,49 @@ def inject_memory_hints(memory: SessionMemory) -> str:
     if not hints:
         return "No prior session references."
     return "Session references:\n" + "\n".join(hints)
+
+
+def resolve_variant_follow_up(
+    user_text: str,
+    memory: SessionMemory,
+    catalog_repo: CatalogRepository,
+) -> VariantFollowUpResolution | None:
+    """Resolve a variant-only follow-up reply against prior product candidates."""
+    if not memory.last_product_candidates:
+        return None
+
+    candidate_rows = _load_candidate_rows(memory.last_product_candidates, catalog_repo)
+    if not candidate_rows:
+        return None
+
+    normalized_color, normalized_size = _parse_variant_reply(user_text, candidate_rows)
+    if normalized_color is None and normalized_size is None:
+        return None
+
+    matched_rows = _filter_candidate_rows(candidate_rows, normalized_color, normalized_size)
+    if not matched_rows:
+        return None
+
+    matched_skus = tuple(str(row["sku"]) for row in matched_rows)
+    updated_memory = SessionMemory(
+        last_order_id=memory.last_order_id,
+        last_customer_id=memory.last_customer_id,
+        last_returnable_order_id=memory.last_returnable_order_id,
+        last_purchase_order_id=memory.last_purchase_order_id,
+        last_product_candidates=matched_skus,
+        last_sku=matched_skus[0] if len(matched_skus) == 1 else memory.last_sku,
+    )
+    return VariantFollowUpResolution(
+        normalized_color=normalized_color,
+        normalized_size=normalized_size,
+        matched_skus=matched_skus,
+        prompt_hint=_build_variant_follow_up_hint(
+            matched_rows,
+            normalized_color,
+            normalized_size,
+        ),
+        updated_memory=updated_memory,
+    )
 
 
 def _optional_str(value: Any) -> str | None:
@@ -256,3 +332,118 @@ def _extract_sku_token(message: str) -> str | None:
         if "-" in token and token.upper() == token:
             return token
     return None
+
+
+def _parse_variant_reply(
+    user_text: str,
+    candidate_rows: list[dict[str, Any]],
+) -> tuple[str | None, str | None]:
+    tokens = re.findall(r"[A-Za-z]+", user_text)
+    if not tokens or len(tokens) > 4:
+        return None, None
+
+    available_colors = {
+        str(color)
+        for color in (row.get("color") for row in candidate_rows)
+        if _optional_str(color)
+    }
+    available_sizes = {
+        str(size)
+        for size in (row.get("size") for row in candidate_rows)
+        if _optional_str(size)
+    }
+    normalized_color: str | None = None
+    normalized_size: str | None = None
+    recognized = 0
+
+    for token in tokens:
+        color = normalize_color(token)
+        if color is not None and color in available_colors:
+            normalized_color = color
+            recognized += 1
+            continue
+
+        size = normalize_size(token)
+        if size is not None and size in available_sizes:
+            normalized_size = size
+            recognized += 1
+            continue
+
+        if token.lower() not in FOLLOW_UP_FILLER_WORDS:
+            return None, None
+
+    if recognized == 0:
+        return None, None
+    return normalized_color, normalized_size
+
+
+def _load_candidate_rows(
+    candidate_skus: tuple[str, ...],
+    catalog_repo: CatalogRepository,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for sku in candidate_skus:
+        row = catalog_repo.get_sku(sku)
+        if row is None:
+            continue
+        resolved_sku = str(row["sku"])
+        if resolved_sku in seen:
+            continue
+        seen.add(resolved_sku)
+        rows.append(row)
+    return rows
+
+
+def _filter_candidate_rows(
+    candidate_rows: list[dict[str, Any]],
+    normalized_color: str | None,
+    normalized_size: str | None,
+) -> list[dict[str, Any]]:
+    matched_rows: list[dict[str, Any]] = []
+    for row in candidate_rows:
+        row_color = _optional_str(row.get("color"))
+        row_size = _optional_str(row.get("size"))
+        if normalized_color is not None and row_color != normalized_color:
+            continue
+        if normalized_size is not None and row_size != normalized_size:
+            continue
+        matched_rows.append(row)
+    return matched_rows
+
+
+def _build_variant_follow_up_hint(
+    matched_rows: list[dict[str, Any]],
+    normalized_color: str | None,
+    normalized_size: str | None,
+) -> str:
+    selected_parts: list[str] = []
+    if normalized_color is not None:
+        selected_parts.append(f"color {normalized_color}")
+    if normalized_size is not None:
+        selected_parts.append(f"size {normalized_size}")
+    selected_detail = " and ".join(selected_parts) or "a variant detail"
+    option_text = ", ".join(_format_candidate_option(row) for row in matched_rows)
+    if len(matched_rows) == 1:
+        row = matched_rows[0]
+        return (
+            "The user sent a variant-only follow-up reply. "
+            f"Bind it only against the recent candidate SKUs. They selected {selected_detail}. "
+            f"This uniquely resolves to SKU {row['sku']} ({_format_candidate_option(row)}). "
+            "Do not invent any other SKU or product."
+        )
+    return (
+        "The user sent a variant-only follow-up reply. "
+        f"Bind it only against the recent candidate SKUs. They selected {selected_detail}. "
+        f"The remaining valid candidates are: {option_text}. "
+        "Do not invent a new SKU. Ask only for the remaining missing variant detail if needed."
+    )
+
+
+def _format_candidate_option(row: dict[str, Any]) -> str:
+    parts = [str(row["product_name"])]
+    if row.get("color"):
+        parts.append(str(row["color"]))
+    if row.get("size"):
+        parts.append(str(row["size"]))
+    return f"{' '.join(parts)} [{row['sku']}]"

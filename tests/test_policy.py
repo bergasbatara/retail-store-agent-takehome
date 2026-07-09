@@ -3,6 +3,7 @@ from __future__ import annotations
 from retail_agent.agent.policy import (
     contains_fake_operational_payload,
     contains_pseudo_tool_markup,
+    is_record_dependent_request,
     response_satisfies_policy,
 )
 
@@ -50,4 +51,14 @@ def test_clarification_mixed_with_fake_receipt_fails_policy():
         "Ring up a hoodie in medium for Sarah Chen.",
         [],
         text,
+    ) is False
+
+
+def test_reporting_queries_are_treated_as_tool_required_record_dependent_requests():
+    assert is_record_dependent_request("What were my top five products by profit margin last month?") is True
+    assert is_record_dependent_request("What's about to stock out?") is True
+    assert response_satisfies_policy(
+        "What were my top five products by profit margin last month?",
+        [],
+        "Pullover Hoodie leads the list.",
     ) is False
