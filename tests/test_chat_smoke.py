@@ -136,3 +136,89 @@ def test_state_changing_plaintext_response_is_reprompted(app_context, monkeypatc
         for message in retry_messages
         if isinstance(message, dict)
     )
+
+
+class PseudoToolTextCompletions:
+    def __init__(self):
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content='<tool_call>\n{"name": "create_sale", "arguments": {"payment_method": "cash"}}\n</tool_call>',
+                        tool_calls=[],
+                    )
+                )
+            ],
+        )
+
+
+class PseudoToolTextClient:
+    def __init__(self):
+        self.chat = SimpleNamespace(completions=PseudoToolTextCompletions())
+
+
+def test_state_changing_pseudo_tool_text_does_not_fall_back_to_empty_response(app_context, monkeypatch):
+    fake_client = PseudoToolTextClient()
+    monkeypatch.setattr(
+        "retail_agent.agent.chat_runtime.build_openai_client",
+        lambda settings: fake_client,
+    )
+
+    text = run_agent_turn(
+        "Ring up two Classic Tees, Blue Medium, and one Canvas Tote for a walk-in paying cash, dated today.",
+        "cli",
+        app_context,
+    )
+
+    assert text != "No response was produced."
+    assert "required tool" in text
+
+
+class FlexibleXmlToolCompletions:
+    def __init__(self):
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if len(self.calls) == 1:
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content='<tool_call>\n{"name": "find_customer", "arguments": {"query": "Sarah Chen"}}\n</tool_call>',
+                            tool_calls=[],
+                        )
+                    )
+                ],
+            )
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="Found Sarah Chen via normalized provider call.",
+                        tool_calls=[],
+                    )
+                )
+            ]
+        )
+
+
+class FlexibleXmlToolClient:
+    def __init__(self):
+        self.chat = SimpleNamespace(completions=FlexibleXmlToolCompletions())
+
+
+def test_xml_style_tool_markup_can_be_safely_normalized_when_schema_matches(app_context, monkeypatch):
+    fake_client = FlexibleXmlToolClient()
+    monkeypatch.setattr(
+        "retail_agent.agent.chat_runtime.build_openai_client",
+        lambda settings: fake_client,
+    )
+
+    text = run_agent_turn("Find Sarah Chen.", "cli", app_context)
+
+    assert text == "Found Sarah Chen via normalized provider call."

@@ -23,6 +23,19 @@ def test_state_changing_plaintext_with_pseudo_tool_markup_fails_policy():
     ) is False
 
 
+def test_xml_style_fake_tool_call_markup_fails_policy():
+    text = """<tool_call>
+{"name": "create_sale", "arguments": {"customer_id": "C-WALKIN", "sale_date": "2026-07-08"}}
+</tool_call>"""
+
+    assert contains_pseudo_tool_markup(text) is True
+    assert response_satisfies_policy(
+        "Ring up two Classic Tees and one Canvas Tote for a walk-in.",
+        [],
+        text,
+    ) is False
+
+
 def test_clarification_mixed_with_fake_receipt_fails_policy():
     text = """Could you confirm the hoodie color?
 

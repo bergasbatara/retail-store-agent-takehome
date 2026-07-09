@@ -30,6 +30,10 @@ PSEUDO_TOOL_PATTERNS = (
     re.compile(r"<\|\s*tool_(?:calls_begin|call_begin|sep|call_end|calls_end)\s*\|>", re.IGNORECASE),
     re.compile(r"\btool_(?:calls_begin|call_begin|sep|call_end|calls_end)\b", re.IGNORECASE),
     re.compile(r"\bfunctions?\b.{0,40}\btool_(?:sep|call_begin|call_end|calls_begin|calls_end)\b", re.IGNORECASE),
+    re.compile(r"</?\s*tool_call\s*>", re.IGNORECASE),
+    re.compile(r"</?\s*tool_calls\s*>", re.IGNORECASE),
+    re.compile(r'"\s*name\s*"\s*:\s*"[^"]+"', re.IGNORECASE),
+    re.compile(r'"\s*arguments\s*"\s*:\s*\{', re.IGNORECASE),
 )
 CLARIFICATION_PATTERNS = (
     r"\bwhich color\b",

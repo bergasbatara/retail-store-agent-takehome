@@ -1,20 +1,21 @@
-"""OpenAI-backed chat runtime with tool calls."""
+"""Provider-agnostic chat runtime with normalized tool calls."""
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
 from retail_agent.agent.openai_client import build_openai_client
+from retail_agent.agent.model_protocol import NormalizedAssistantTurn, NormalizedToolCall
 from retail_agent.agent.policy import (
-    contains_pseudo_tool_markup,
     is_state_changing_request,
     is_true_clarification_or_error,
     response_satisfies_policy,
 )
 from retail_agent.agent.prompts import system_prompt
+from retail_agent.agent.providers.base import ModelProvider
+from retail_agent.agent.providers.openai_compat import OpenAICompatProvider
 from retail_agent.agent.tool_executor import execute_tool_call
 from retail_agent.agent.tool_schemas import build_tool_definitions
 from retail_agent.cli import AppContext
@@ -39,13 +40,6 @@ MAX_HISTORY_MESSAGES = 12
 MAX_POLICY_RETRIES = 2
 
 
-@dataclass(frozen=True)
-class ModelResponse:
-    """Normalized model response wrapper used by the tool loop."""
-
-    raw: Any
-
-
 def run_agent_turn(user_text: str, session_id: str, app_context: AppContext) -> str:
     """Run a single agent turn with bounded session memory and tool use."""
     session_memory = app_context.session_state.setdefault(
@@ -61,12 +55,12 @@ def run_agent_turn(user_text: str, session_id: str, app_context: AppContext) -> 
     messages = build_messages(session_memory, user_text, structured_memory)
     tools = build_tool_definitions()
     client = build_openai_client(app_context.settings)
+    provider = OpenAICompatProvider(client, app_context.settings.model_name)
     require_tool_choice = is_state_changing_request(user_text)
     initial_response = submit_with_tools(
         messages=messages,
         tools=tools,
-        client=client,
-        model_name=app_context.settings.model_name,
+        provider=provider,
         tool_choice=_tool_choice_for_request(require_tool_choice),
     )
     final_text = run_tool_loop(
@@ -74,8 +68,7 @@ def run_agent_turn(user_text: str, session_id: str, app_context: AppContext) -> 
         messages=messages,
         session_memory=session_memory,
         tools=tools,
-        client=client,
-        model_name=app_context.settings.model_name,
+        provider=provider,
         app_context=app_context,
         structured_memory=structured_memory,
         session_id=session_id,
@@ -111,31 +104,19 @@ def build_messages(
 def submit_with_tools(
     messages: list[dict],
     tools: list[dict],
-    client: Any,
-    model_name: str,
+    provider: ModelProvider,
     tool_choice: str | None = None,
-) -> ModelResponse:
-    """Submit a chat-completions request with tool definitions."""
-    request_kwargs: dict[str, Any] = {
-        "model": model_name,
-        "messages": messages,
-        "tools": tools,
-    }
-    if tool_choice is not None:
-        request_kwargs["tool_choice"] = tool_choice
-    response = client.chat.completions.create(
-        **request_kwargs,
-    )
-    return ModelResponse(raw=response)
+) -> NormalizedAssistantTurn:
+    """Submit a provider request with tool definitions."""
+    return provider.submit(messages=messages, tools=tools, tool_choice=tool_choice)
 
 
 def run_tool_loop(
-    initial_response: ModelResponse,
+    initial_response: NormalizedAssistantTurn,
     messages: list[dict],
     session_memory: dict,
     tools: list[dict],
-    client: Any,
-    model_name: str,
+    provider: ModelProvider,
     app_context: AppContext,
     structured_memory: SessionMemory,
     session_id: str,
@@ -143,7 +124,7 @@ def run_tool_loop(
     require_tool_choice: bool,
 ) -> str:
     """Execute tool calls until the model returns final text."""
-    response = initial_response.raw
+    response = initial_response
     conversation_messages = list(messages)
     original_user_text = next(
         (str(message["content"]) for message in reversed(messages) if message.get("role") == "user"),
@@ -157,8 +138,8 @@ def run_tool_loop(
     failed_state_change_result: dict[str, Any] | None = None
 
     while True:
-        tool_calls = _extract_tool_calls(response)
-        final_text = _extract_text(response)
+        tool_calls = list(response.tool_calls)
+        final_text = response.text
         if not tool_calls:
             effective_tool_calls = tool_calls or ([{"name": "completed_tool"}] if used_tool_this_turn else [])
             if not response_satisfies_policy(original_user_text, effective_tool_calls, final_text):
@@ -167,8 +148,7 @@ def run_tool_loop(
                     if assistant_message is not None:
                         conversation_messages.append(assistant_message)
                     conversation_messages.append(build_tool_retry_message(original_user_text))
-                    response = client.chat.completions.create(
-                        model=model_name,
+                    response = provider.submit(
                         messages=conversation_messages,
                         tools=tools,
                         tool_choice=_tool_choice_for_request(require_tool_choice),
@@ -188,6 +168,8 @@ def run_tool_loop(
                 return _render_state_change_clarification(final_text)
             if final_text:
                 return final_text
+            if require_tool_choice:
+                return _policy_failure_message(original_user_text)
             if conversation_messages and conversation_messages[-1].get("role") == "assistant":
                 return str(conversation_messages[-1].get("content", ""))
             return "No response was produced."
@@ -197,8 +179,7 @@ def run_tool_loop(
             conversation_messages.append(assistant_message)
 
         for tool_call in tool_calls:
-            arguments = _parse_tool_arguments(tool_call)
-            tool_result = execute_tool_call(tool_call["name"], arguments, app_context)
+            tool_result = execute_tool_call(tool_call.name, tool_call.arguments, app_context)
             summarized = summarize_tool_result(tool_result)
             used_tool_this_turn = True
             if tool_result.get("ok") and tool_result.get("tool") in STATE_CHANGING_TOOLS:
@@ -219,14 +200,13 @@ def run_tool_loop(
             conversation_messages.append(
                 {
                     "role": "tool",
-                    "tool_call_id": tool_call["call_id"],
+                    "tool_call_id": tool_call.call_id,
                     "content": json.dumps(tool_result, default=str),
                 }
             )
             _ = summarized
 
-        response = client.chat.completions.create(
-            model=model_name,
+        response = provider.submit(
             messages=conversation_messages,
             tools=tools,
             tool_choice=_tool_choice_for_request(require_tool_choice and not used_tool_this_turn),
@@ -242,100 +222,29 @@ def summarize_tool_result(tool_result: dict, /) -> str:
     return f"{tool_result.get('tool', 'tool')} failed: {error.get('message', 'Unknown error')}"
 
 
-def _extract_tool_calls(response: Any) -> list[dict[str, str]]:
-    choice = _first_choice(response)
-    message = _maybe_get(choice, "message")
-    raw_tool_calls = _maybe_get(message, "tool_calls") or []
-    tool_calls: list[dict[str, str]] = []
-    for item in raw_tool_calls:
-        item_type = _maybe_get(item, "type")
-        if item_type not in {None, "function"}:
-            continue
-        function = _maybe_get(item, "function")
-        tool_calls.append(
-            {
-                "name": _maybe_get(function, "name"),
-                "arguments": _maybe_get(function, "arguments") or "{}",
-                "call_id": _maybe_get(item, "id"),
-            }
-        )
-    return tool_calls
-
-
-def _extract_text(response: Any) -> str:
-    choice = _first_choice(response)
-    message = _maybe_get(choice, "message")
-    content = _maybe_get(message, "content")
-    if isinstance(content, str):
-        text = content.strip()
-        if contains_pseudo_tool_markup(text):
-            return ""
-        return text
-    if isinstance(content, list):
-        text_parts = [str(part.get("text", "")) for part in content if isinstance(part, dict)]
-        text = "\n".join(part for part in text_parts if part).strip()
-        if contains_pseudo_tool_markup(text):
-            return ""
-        return text
-    return ""
-
-
-def _parse_tool_arguments(tool_call: dict[str, str]) -> dict:
-    raw = tool_call.get("arguments", "{}")
-    if isinstance(raw, str):
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-    return raw if isinstance(raw, dict) else {}
-
-
 def _bounded_messages(messages: list[dict]) -> list[dict]:
     history = [message for message in messages if message.get("role") != "system"]
     return history[-MAX_HISTORY_MESSAGES:]
 
 
-def _assistant_message_from_response(response: Any) -> dict[str, Any] | None:
-    choice = _first_choice(response)
-    message = _maybe_get(choice, "message")
-    if message is None:
+def _assistant_message_from_response(response: NormalizedAssistantTurn) -> dict[str, Any] | None:
+    if not response.text and not response.tool_calls:
         return None
 
-    content = _maybe_get(message, "content")
-    tool_calls = _maybe_get(message, "tool_calls")
-    assistant_message: dict[str, Any] = {"role": "assistant"}
-    if content is not None:
-        if isinstance(content, str) and contains_pseudo_tool_markup(content):
-            assistant_message["content"] = ""
-        else:
-            assistant_message["content"] = content
-    else:
-        assistant_message["content"] = ""
-    if tool_calls:
+    assistant_message: dict[str, Any] = {"role": "assistant", "content": response.text or ""}
+    if response.tool_calls:
         assistant_message["tool_calls"] = [
             {
-                "id": _maybe_get(tool_call, "id"),
-                "type": _maybe_get(tool_call, "type") or "function",
+                "id": tool_call.call_id,
+                "type": "function",
                 "function": {
-                    "name": _maybe_get(_maybe_get(tool_call, "function"), "name"),
-                    "arguments": _maybe_get(_maybe_get(tool_call, "function"), "arguments"),
+                    "name": tool_call.name,
+                    "arguments": json.dumps(tool_call.arguments),
                 },
             }
-            for tool_call in tool_calls
+            for tool_call in response.tool_calls
         ]
     return assistant_message
-
-
-def _first_choice(response: Any) -> Any:
-    choices = _maybe_get(response, "choices") or []
-    return choices[0] if choices else None
-
-
-def _maybe_get(value: Any, key: str) -> Any:
-    if isinstance(value, dict):
-        return value.get(key)
-    return getattr(value, key, None)
 
 
 def _policy_failure_message(user_text: str) -> str:
