@@ -92,6 +92,13 @@ ERROR_PATTERNS = (
     r"\bexceeds\b",
 )
 
+LOOKUP_TOOLS = {
+    "find_customer",
+    "find_product",
+    "find_order",
+    "find_purchase_order",
+}
+
 
 def is_state_changing_request(user_text: str) -> bool:
     """Return True when the user appears to request a state mutation."""
@@ -155,3 +162,103 @@ def contains_fake_operational_payload(final_text: str) -> bool:
     if not normalized:
         return False
     return any(re.search(pattern, normalized) for pattern in FAKE_OPERATIONAL_PAYLOAD_PATTERNS)
+
+
+def expected_tool_names(user_text: str) -> set[str]:
+    """Return the tool names that make sense for the current request intent."""
+    normalized = user_text.lower().strip()
+    if not normalized:
+        return set()
+
+    if re.search(r"\btop\b.*\bproducts?\b.*\bmargin\b", normalized) or re.search(
+        r"\bprofit margin\b",
+        normalized,
+    ):
+        return {"top_products_by_margin"}
+
+    if any(
+        re.search(pattern, normalized)
+        for pattern in (
+            r"\bstockout\b",
+            r"\bstock out\b",
+            r"\babout to stock out\b",
+            r"\breorder point\b",
+            r"\bdays of cover\b",
+        )
+    ):
+        return {"stockout_risk_report"}
+
+    if any(
+        re.search(pattern, normalized)
+        for pattern in (
+            r"\bprice\b",
+            r"\bhow much\b",
+            r"\bwhat(?:'s| is)? the price\b",
+            r"\btell me the price\b",
+        )
+    ):
+        return {"get_product_price", "find_product"}
+
+    if re.search(r"\bfind customer\b", normalized) or re.search(
+        r"\blook up\b.*\bcustomer\b",
+        normalized,
+    ):
+        return {"find_customer"}
+
+    if re.search(r"\bfind order\b", normalized) or re.search(
+        r"\blook up\b.*\border\b",
+        normalized,
+    ):
+        return {"find_order"}
+
+    if re.search(r"\bfind purchase order\b", normalized) or re.search(
+        r"\blook up\b.*\bpurchase order\b",
+        normalized,
+    ):
+        return {"find_purchase_order"}
+
+    if re.search(r"\bfind product\b", normalized) or re.search(
+        r"\blook up\b.*\bproduct\b",
+        normalized,
+    ):
+        return {"find_product"}
+
+    if re.search(r"\breceive\b", normalized) and re.search(r"\bpurchase order\b|\bpo\b", normalized):
+        return {"receive_purchase_order", "find_purchase_order"}
+
+    if re.search(r"\breorder\b", normalized) or re.search(r"\brestock\b", normalized):
+        return {"reorder_low_stock"}
+
+    if re.search(r"\breturn\b", normalized) or re.search(r"\brefund\b", normalized):
+        return {"process_return", "find_order"}
+
+    if re.search(r"\bput\b.*\bon\b.*\boff\b", normalized) or re.search(
+        r"\bcreate promotion\b",
+        normalized,
+    ):
+        if re.search(r"\bring up\b|\bsell\b", normalized) or re.search(
+            r"\btell me the price\b|\bprice\b",
+            normalized,
+        ):
+            return {"create_promotion", "ring_up_sale", "get_product_price", "find_product"}
+        return {"create_promotion", "find_product"}
+
+    if re.search(r"\bring up\b|\bsell\b", normalized):
+        return {"ring_up_sale", "find_product", "find_customer"}
+
+    return set()
+
+
+def required_lookup_tool_names(user_text: str) -> set[str]:
+    """Return lookup tools that must be called before execution for this request."""
+    normalized = user_text.lower().strip()
+    if not normalized:
+        return set()
+
+    if re.search(r"\breceive\b", normalized) and re.search(r"\bpurchase order\b|\bpo\b", normalized):
+        return {"find_purchase_order"}
+
+    if re.search(r"\breturn\b", normalized) or re.search(r"\brefund\b", normalized):
+        return {"find_order"}
+
+    return set()

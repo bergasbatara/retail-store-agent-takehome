@@ -130,6 +130,22 @@ def test_receive_purchase_order_normalizes_hybrid_product_sku_reference(app_cont
     assert receive_result["result"]["purchase_order_id"] == po_id
 
 
+def test_find_purchase_order_resolves_natural_language_supplier_product_open_reference(app_context):
+    reorder_result = execute_tool_call("reorder_low_stock", {"order_date": "2026-07-09"}, app_context)
+    po_id = reorder_result["result"]["purchase_orders"][0]["purchase_order_id"]
+
+    po_result = execute_tool_call(
+        "find_purchase_order",
+        {
+            "query": "A purchase order for 50 Canvas Totes from Northwind is open and 40 arrived",
+        },
+        app_context,
+    )
+
+    assert po_result["ok"] is True
+    assert po_result["result"]["purchase_order"]["purchase_order"]["purchase_order_id"] == po_id
+
+
 def test_category_scoped_hoodie_promotion_is_coerced_to_product_and_applied(app_context):
     promo_result = execute_tool_call(
         "create_promotion",

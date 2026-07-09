@@ -548,6 +548,22 @@ class PurchaseOrderRepository:
         ).fetchall()
         return _rows_to_dicts(rows)
 
+    def list_purchase_orders(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+                po.purchase_order_id,
+                po.supplier_id,
+                s.supplier_name,
+                po.order_date,
+                po.status
+            FROM purchase_orders po
+            JOIN suppliers s ON s.supplier_id = po.supplier_id
+            ORDER BY po.order_date DESC, po.purchase_order_id DESC
+            """
+        ).fetchall()
+        return _rows_to_dicts(rows)
+
     def get_open_purchase_order(self, po_id: str) -> dict[str, Any] | None:
         po_bundle = self.get_purchase_order(po_id)
         if po_bundle is None:

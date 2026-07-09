@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import date
 from decimal import Decimal
+import re
 from typing import Any
 
 from retail_agent.cli import AppContext
@@ -237,9 +238,13 @@ def handle_find_order(arguments: dict, app_context: AppContext) -> dict:
 def handle_find_purchase_order(arguments: dict, app_context: AppContext) -> dict:
     repo = PurchaseOrderRepository(app_context.conn)
     query = str(arguments["query"]).strip()
-    exact_bundle = repo.get_purchase_order(query)
+    normalized_po_id = _extract_purchase_order_id_token(query)
+    exact_bundle = repo.get_purchase_order(normalized_po_id or query)
     if exact_bundle is not None:
         return {"purchase_order": _to_payload(exact_bundle)}
+    resolved_bundle = _resolve_purchase_order_lookup(query, repo)
+    if resolved_bundle is not None:
+        return {"purchase_order": _to_payload(resolved_bundle)}
     orders = repo.find_purchase_orders(query)
     return {"purchase_orders": [_to_payload(order) for order in orders], "count": len(orders)}
 
@@ -388,6 +393,143 @@ def _resolve_price_lookup_sku(arguments: dict[str, Any], catalog_repo: CatalogRe
         )
     resolved = resolve_variant(query, arguments.get("color"), arguments.get("size"), catalog_repo)
     return resolved.sku
+
+
+def _resolve_purchase_order_lookup(
+    query: str,
+    repo: PurchaseOrderRepository,
+) -> dict[str, Any] | None:
+    summaries = repo.list_purchase_orders()
+    if not summaries:
+        return None
+
+    bundles = [
+        repo.get_purchase_order(str(summary["purchase_order_id"]))
+        for summary in summaries
+    ]
+    candidate_bundles = [
+        bundle
+        for bundle in bundles
+        if bundle is not None and _purchase_order_matches_query(bundle, query)
+    ]
+    if len(candidate_bundles) == 1:
+        return candidate_bundles[0]
+    return None
+
+
+def _purchase_order_matches_query(bundle: dict[str, Any], query: str) -> bool:
+    purchase_order = bundle.get("purchase_order") or {}
+    lines = bundle.get("lines") or []
+    normalized_query = _normalize_free_text(query)
+    if not normalized_query:
+        return False
+
+    if _query_mentions_open_status(normalized_query):
+        status = str(purchase_order.get("status", "")).lower()
+        if status not in {"open", "partial"}:
+            return False
+
+    supplier_name = _normalize_free_text(str(purchase_order.get("supplier_name", "")))
+    if _query_mentions_supplier_name(normalized_query, supplier_name) and not _supplier_name_matches_query(
+        normalized_query,
+        supplier_name,
+    ):
+        return False
+
+    numeric_tokens = _extract_numeric_tokens(normalized_query)
+    if numeric_tokens and not any(
+        int(line.get("quantity_ordered", 0)) in numeric_tokens
+        for line in lines
+        if isinstance(line, dict)
+    ):
+        return False
+
+    if _query_mentions_purchase_order_id(normalized_query):
+        po_id = str(purchase_order.get("purchase_order_id", "")).upper()
+        if po_id not in query.upper():
+            return False
+
+    if _query_mentions_product(normalized_query):
+        if not any(_purchase_order_line_matches_query(line, normalized_query) for line in lines):
+            return False
+
+    return True
+
+
+def _purchase_order_line_matches_query(line: dict[str, Any], normalized_query: str) -> bool:
+    reference_terms = set(candidate_reference_terms(str(line.get("product_name", ""))))
+    if line.get("sku"):
+        reference_terms.add(str(line["sku"]))
+    for term in reference_terms:
+        normalized_term = _normalize_free_text(term)
+        if normalized_term in normalized_query:
+            return True
+        if _all_term_tokens_present(normalized_query, normalized_term):
+            return True
+    return False
+
+
+def _normalize_free_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def _extract_numeric_tokens(normalized_query: str) -> set[int]:
+    return {int(token) for token in re.findall(r"\b\d+\b", normalized_query)}
+
+
+def _query_mentions_open_status(normalized_query: str) -> bool:
+    return " open " in f" {normalized_query} "
+
+
+def _query_mentions_purchase_order_id(normalized_query: str) -> bool:
+    return bool(re.search(r"\bpo\s*\d+\b", normalized_query))
+
+
+def _query_mentions_product(normalized_query: str) -> bool:
+    product_markers = (
+        "tote",
+        "hoodie",
+        "tee",
+        "mug",
+        "sock",
+        "canvas",
+        "pullover",
+        "classic",
+    )
+    return any(marker in normalized_query for marker in product_markers)
+
+
+def _query_mentions_supplier_name(normalized_query: str, supplier_name: str) -> bool:
+    if not supplier_name:
+        return False
+    supplier_tokens = [token for token in supplier_name.split() if len(token) >= 4]
+    return any(token in normalized_query.split() for token in supplier_tokens)
+
+
+def _supplier_name_matches_query(normalized_query: str, supplier_name: str) -> bool:
+    supplier_tokens = [token for token in supplier_name.split() if len(token) >= 4]
+    if not supplier_tokens:
+        return False
+    query_tokens = set(normalized_query.split())
+    return any(token in query_tokens for token in supplier_tokens)
+
+
+def _all_term_tokens_present(normalized_query: str, normalized_term: str) -> bool:
+    term_tokens = [token for token in normalized_term.split() if token]
+    if not term_tokens:
+        return False
+    query_tokens = normalized_query.split()
+    return all(
+        any(query_token == token or query_token.rstrip("s") == token.rstrip("s") for query_token in query_tokens)
+        for token in term_tokens
+    )
+
+
+def _extract_purchase_order_id_token(query: str) -> str | None:
+    match = re.search(r"\bPO[-\s]?(\d{1,6})\b", query, re.IGNORECASE)
+    if not match:
+        return None
+    return f"PO-{int(match.group(1)):04d}"
 
 
 def _normalize_order_reference(value: Any) -> str:

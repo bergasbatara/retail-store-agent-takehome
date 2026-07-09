@@ -9,8 +9,10 @@ from typing import Any
 from retail_agent.agent.openai_client import build_openai_client
 from retail_agent.agent.model_protocol import NormalizedAssistantTurn, NormalizedToolCall
 from retail_agent.agent.policy import (
+    expected_tool_names,
     is_record_dependent_request,
     is_true_clarification_or_error,
+    required_lookup_tool_names,
     response_satisfies_policy,
 )
 from retail_agent.agent.prompts import system_prompt
@@ -65,6 +67,11 @@ def run_agent_turn(user_text: str, session_id: str, app_context: AppContext) -> 
         save_session_memory(session_id, structured_memory, repo)
         extra_system_messages.append(follow_up_resolution.prompt_hint)
 
+    policy_user_text = _policy_text_for_turn(
+        session_memory.get("messages", []),
+        user_text,
+        follow_up_resolution is not None,
+    )
     messages = build_messages(
         session_memory,
         user_text,
@@ -74,7 +81,9 @@ def run_agent_turn(user_text: str, session_id: str, app_context: AppContext) -> 
     tools = build_tool_definitions()
     client = build_openai_client(app_context.settings)
     provider = OpenAICompatProvider(client, app_context.settings.model_name)
-    require_tool_choice = is_record_dependent_request(user_text)
+    require_tool_choice = is_record_dependent_request(policy_user_text)
+    allowed_tool_names = expected_tool_names(policy_user_text)
+    required_lookup_names = required_lookup_tool_names(policy_user_text)
     initial_response = submit_with_tools(
         messages=messages,
         tools=tools,
@@ -92,6 +101,9 @@ def run_agent_turn(user_text: str, session_id: str, app_context: AppContext) -> 
         session_id=session_id,
         session_repo=repo,
         require_tool_choice=require_tool_choice,
+        policy_user_text=policy_user_text,
+        allowed_tool_names=allowed_tool_names,
+        required_lookup_names=required_lookup_names,
     )
     session_memory["messages"] = _bounded_messages(
         session_memory.get("messages", [])
@@ -148,6 +160,9 @@ def run_tool_loop(
     session_id: str,
     session_repo: SessionRepository,
     require_tool_choice: bool,
+    policy_user_text: str,
+    allowed_tool_names: set[str],
+    required_lookup_names: set[str],
 ) -> str:
     """Execute tool calls until the model returns final text."""
     response = initial_response
@@ -162,18 +177,49 @@ def run_tool_loop(
     successful_deterministic_result: dict[str, Any] | None = None
     last_tool_error_result: dict[str, Any] | None = None
     failed_state_change_result: dict[str, Any] | None = None
+    satisfied_lookup_names: set[str] = set()
 
     while True:
         tool_calls = list(response.tool_calls)
         final_text = response.text
+        current_allowed_tool_names = _allowed_tool_names_for_step(
+            allowed_tool_names,
+            required_lookup_names,
+            satisfied_lookup_names,
+        )
+        invalid_tool_names = [
+            tool_call.name
+            for tool_call in tool_calls
+            if current_allowed_tool_names and tool_call.name not in current_allowed_tool_names
+        ]
+        if invalid_tool_names:
+            if policy_retry_count < MAX_POLICY_RETRIES:
+                assistant_message = _assistant_message_from_response(response)
+                if assistant_message is not None:
+                    conversation_messages.append(assistant_message)
+                conversation_messages.append(
+                    build_tool_intent_retry_message(
+                        policy_user_text,
+                        current_allowed_tool_names,
+                        required_lookup_names - satisfied_lookup_names,
+                    )
+                )
+                response = provider.submit(
+                    messages=conversation_messages,
+                    tools=tools,
+                    tool_choice=_tool_choice_for_request(require_tool_choice),
+                )
+                policy_retry_count += 1
+                continue
+            return _policy_failure_message(policy_user_text)
         if not tool_calls:
             effective_tool_calls = tool_calls or ([{"name": "completed_tool"}] if used_tool_this_turn else [])
-            if not response_satisfies_policy(original_user_text, effective_tool_calls, final_text):
+            if not response_satisfies_policy(policy_user_text, effective_tool_calls, final_text):
                 if policy_retry_count < MAX_POLICY_RETRIES:
                     assistant_message = _assistant_message_from_response(response)
                     if assistant_message is not None:
                         conversation_messages.append(assistant_message)
-                    conversation_messages.append(build_tool_retry_message(original_user_text))
+                    conversation_messages.append(build_tool_retry_message(policy_user_text))
                     response = provider.submit(
                         messages=conversation_messages,
                         tools=tools,
@@ -181,7 +227,7 @@ def run_tool_loop(
                     )
                     policy_retry_count += 1
                     continue
-                return _policy_failure_message(original_user_text)
+                return _policy_failure_message(policy_user_text)
             if failed_state_change_result is not None:
                 return _render_tool_error(failed_state_change_result)
             if successful_state_change_results:
@@ -195,7 +241,7 @@ def run_tool_loop(
             if final_text:
                 return final_text
             if require_tool_choice:
-                return _policy_failure_message(original_user_text)
+                return _policy_failure_message(policy_user_text)
             if conversation_messages and conversation_messages[-1].get("role") == "assistant":
                 return str(conversation_messages[-1].get("content", ""))
             return "No response was produced."
@@ -212,6 +258,8 @@ def run_tool_loop(
                 successful_state_change_results.append(tool_result)
             if tool_result.get("ok") and tool_result.get("tool") in DETERMINISTIC_RESULT_TOOLS:
                 successful_deterministic_result = tool_result
+            if tool_result.get("ok") and tool_result.get("tool") in required_lookup_names:
+                satisfied_lookup_names.add(str(tool_result.get("tool")))
             if not tool_result.get("ok"):
                 last_tool_error_result = tool_result
                 if tool_result.get("tool") in STATE_CHANGING_TOOLS:
@@ -297,10 +345,62 @@ def build_tool_retry_message(user_text: str) -> dict[str, str]:
     }
 
 
+def build_tool_intent_retry_message(
+    user_text: str,
+    allowed_tool_names: set[str],
+    remaining_required_lookup_names: set[str] | None = None,
+) -> dict[str, str]:
+    """Build a corrective system instruction when the model chose the wrong tool."""
+    allowed = ", ".join(sorted(allowed_tool_names)) or "the matching tool"
+    lookup_requirement = ""
+    if remaining_required_lookup_names:
+        lookup_requirement = (
+            " You must resolve the record first with "
+            + ", ".join(sorted(remaining_required_lookup_names))
+            + " before any state-changing tool."
+        )
+    return {
+        "role": "system",
+        "content": (
+            "The previous tool call did not match the request intent. "
+            f"For this request, only these tools are valid: {allowed}. "
+            f"Choose the correct tool for the request and do not invent alternate workflows.{lookup_requirement} "
+            f"Original user request: {user_text}"
+        ),
+    }
+
+
 def _tool_choice_for_request(require_tool_choice: bool) -> str | None:
     if require_tool_choice:
         return "required"
     return None
+
+
+def _policy_text_for_turn(
+    history: list[dict[str, Any]],
+    user_text: str,
+    inherit_previous_user_intent: bool,
+) -> str:
+    if not inherit_previous_user_intent:
+        return user_text
+    for message in reversed(history):
+        if message.get("role") != "user":
+            continue
+        previous_user_text = str(message.get("content", "")).strip()
+        if previous_user_text:
+            return previous_user_text
+    return user_text
+
+
+def _allowed_tool_names_for_step(
+    allowed_tool_names: set[str],
+    required_lookup_names: set[str],
+    satisfied_lookup_names: set[str],
+) -> set[str]:
+    remaining_lookup_names = required_lookup_names - satisfied_lookup_names
+    if remaining_lookup_names:
+        return remaining_lookup_names
+    return allowed_tool_names
 
 
 def _render_state_change_clarification(final_text: str) -> str:
