@@ -77,3 +77,21 @@ def test_receive_purchase_order_can_resolve_product_name_to_po_line(app_context)
 
     assert receive_result["ok"] is True
     assert receive_result["result"]["purchase_order_id"] == po_id
+
+
+def test_receive_purchase_order_normalizes_explicit_fake_sku_to_real_po_line(app_context):
+    reorder_result = execute_tool_call("reorder_low_stock", {"order_date": "2026-06-19"}, app_context)
+    po_id = reorder_result["result"]["purchase_orders"][0]["purchase_order_id"]
+
+    receive_result = execute_tool_call(
+        "receive_purchase_order",
+        {
+            "purchase_order_id": po_id,
+            "receive_date": "2026-06-19",
+            "received_items": [{"sku": "TOTE-001", "quantity_received": 40}],
+        },
+        app_context,
+    )
+
+    assert receive_result["ok"] is True
+    assert receive_result["result"]["purchase_order_id"] == po_id

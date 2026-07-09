@@ -299,7 +299,7 @@ def _receive_item_input(raw: dict[str, Any], po_lines: list[dict[str, Any]]) -> 
     sku = _optional_non_empty_str(raw.get("sku"))
     if sku:
         return ReceiveItemInput(
-            sku=sku,
+            sku=_resolve_po_line_sku(sku, po_lines),
             quantity_received=int(raw["quantity_received"]),
         )
 
